@@ -1,85 +1,125 @@
-# Fine-Tuning Northern Vietnamese StyleTTS2/Kokoro — Technical Walkthrough
+# Fine-Tuning Northern Vietnamese StyleTTS2/Kokoro — Technical Walkthrough (V3)
 
-This document explains our premium training workflow, the architectural strategy, and step-by-step instructions for executing the fine-tuning process.
+This technical walkthrough documents the V3 fine-tuning pipeline for the Northern Vietnamese KokoroTTS / StyleTTS2 model. It covers the architectural design, hybrid dialect controllers, vocabulary surgery, and GPU-accelerated training orchestration.
 
 ---
 
-## 1. The Dialect-Mixed Hybrid Strategy & G2P Layer
+## 1. Core Architectural & Phonetic Strategy
 
-To achieve production quality comparable to Kokoro's native English voices and beat the quality ceilings of previous models (like `StyleTTS2-lite-vi`), we adopt a **dialect-mixed hybrid corpus strategy** paired with a **uniform Northern phonetic target layer**:
+To achieve premium naturalness, expressiveness, and dialect isolation, our V3 pipeline implements a **dialect-mixed hybrid corpus strategy** paired with a **uniform Northern phonetic target layer** and **strict speaker-stratification**:
 
-### A. Bypassing Speaker & Dialect Filtering (Maximizing Scale)
-- **The Gap in StyleTTS2-lite-vi**: They trained with a batch size of 3 and starved the GAN discriminators, leading to robotic/metallic voicing and mode collapse.
-- **Our Strategy**: StyleTTS2's style encoder learns to extract general speaking latents from acoustic variety. By disabling aggressive speaker whitelists and dialect blocklists, we increase the PhoAudioBook training set size by **3–4$\times$**.
-- **Acoustic Diversity**: This massive increase in voices gives the Style encoder and GAN discriminators a highly diverse acoustic dataset, which prevents mode collapse and stabilizes adversarial training.
+```
+                                    +-----------------------+
+                                    |   PhoAudioBook Dataset|
+                                    +-----------+-----------+
+                                                |
+                                                v
+                                    +-----------+-----------+
+                                    |   Dialect Auditor &   |
+                                    |   DNSMOS ONNX Quality |
+                                    +-----------+-----------+
+                                                |
+                                                v
+                              +-----------------+-----------------+
+                              |                                   |
+                              v (Northern Dialect Text)           v (Southern/Central Text)
+                      +-------+-------+                   +-------+-------+
+                      |   G2P (North) |                   |   G2P (South) |
+                      +-------+-------+                   +-------+-------+
+                              |                                   |
+                              +-----------------+-----------------+
+                                                |
+                                                v
+                                    +-----------+-----------+
+                                    |Speaker-Stratified Split|
+                                    +-----------+-----------+
+```
 
-### B. `vi2IPA(normalized, dialect="north")` as the Accent Controller
-- **Uniform Phonemization**: While the audio inputs are dialect-mixed, standard Vietnamese texts are mapped *strictly* to a Northern-dialect IPA representation (e.g. mapping "d", "gi", and "r" to `/z/` rather than Southern variants, and using Northern tone pitch contours).
-- **Phonemic Correction**: Because we G2P everything using `dialect="north"`, even Southern or Central audio clips are paired with Northern IPA targets. The text encoder learns phoneme-to-acoustic mappings from the Northern IPA, forcing the acoustic generator to produce Northern-accented speech regardless of the input speaker's native regional style.
+### A. Perceptual Quality Gating (DNSMOS ONNX)
+- Audio clips are downmixed to mono, resampled to 24 kHz, and normalized to exactly `-23.0 LUFS` to standardise loudness.
+- Post-normalization clipping checks filter out distorted or clipped audio.
+- The pipeline integrates the official **Microsoft DNSMOS ONNX** model (`dnsmos_p835.onnx`) to perform deep perceptual acoustic analysis, discarding any clip with an overall Mean Opinion Score (MOS) below `3.5`. This keeps background noise, hums, and room reverberations out of training.
+
+### B. Dynamic Dialect Auditing & Classification
+- Text transcripts are audited for Southern and Central regional lexical items (like *vầy*, *hổng*, *chi*, *mô*). Obvious dialect mismatches are immediately discarded.
+- A **Wav2Vec2-based Dialect Classifier** (`wav2vec2-base-vi-accent-classification`) is employed on-the-fly with confidence gating (`AUDIT_CONFIDENCE = 0.85`).
+- The auditor votes across 6 spread audio samples for each speaker to lock their dialect class (`north`, `south`, `central`, or `mixed`). `mixed` speakers are automatically excluded to preserve phonetic purity.
+- If a speaker's locked accent is not Northern and the pipeline is in Northern-only mode, the speaker is filtered out. If the pipeline is running in multi-dialect mode, the G2P layer dynamically adjusts to use dialect-specific rules (`vi2IPA(text, dialect=locked)`).
+
+### C. True Speaker-Stratified Split (Zero Leakage)
+- Naive random train/val splitting causes severe **speaker leakage** (clips from the same speaker appear in both the training set and the validation set), causing overfit and invalid evaluation scores.
+- V3 implements **speaker stratification**: clips are grouped by speaker, and the 95% training / 5% validation split is applied *within* each speaker. This ensures that the validation set is a true indicator of generalization.
 
 ---
 
 ## 2. Complete Staged Training Workflow
 
-The training architecture is split into 4 stages orchestrated by `train.sh` and executed by standalone Python scripts:
+The pipeline is coordinated by the root `train.sh` orchestrator and executed via optimized modular Python scripts:
 
 ```mermaid
 graph TD
-    A[train.sh setup] -->|Install venv & mock imp| B[train.sh fetch]
-    B -->|Scan PhoAudioBook metadata stats| C[train.sh filter]
-    C -->|prepare_dataset.py with 95/5 split| D[train_manifest.csv & val_manifest.csv]
-    D --> E[Host: extend_vocab.py surgery]
-    E -->|Extend embeddings & config_vi.json| F[Docker: run_train.py sequence loss]
+    A["train.sh setup"] -->|Install venv & mock imp| B["train.sh fetch"]
+    B -->|Verify HF Auth & Stats| C["train.sh filter"]
+    C -->|prepare_dataset.py 95/5 split| D["data/train_list.txt & data/val_list.txt"]
+    D --> E["Host: extend_vocab.py surgery"]
+    E -->|Extend embeddings & config_vi.json| F["Docker build: compile monotonic_align"]
+    F --> G["Docker run: run_train.py coordinator"]
+    G -->|Dynamic config_vi.yaml alignment| H["Official train.py: adversarial GAN losses"]
 ```
 
-### Stage 1: Setup (`bash train.sh setup`)
-- Creates a Python virtual environment (`venv`).
-- Installs local dependencies (`vinorm`, `viphoneme`, `underthesea`, `soundfile`, `librosa`, `torch`).
-- Applies GTT Unified memory adjustments for Strix Halo iGPU performance.
+### Stage 1: System Setup (`bash train.sh setup`)
+- Builds the local Python virtual environment (`venv`).
+- Installs all local dependencies (`transformers`, `onnxruntime`, `viphoneme`, `datasets`, etc.) along with the correct **AMD ROCm 6.2 enabled PyTorch wheels**.
+- Configures **AMD Unified Memory GTT size** (`gttsize = 96 GB`) in `/sys/module/amdgpu/parameters/gttsize` for the Strix Halo iGPU to maximize memory performance and eliminate PCIe bus transfer latency.
 
-### Stage 2: Fetch (`bash train.sh fetch`)
-- Scans `thivux/phoaudiobook` file trees on Hugging Face to extract speaker metadata.
-- Compiles a complete list of 697 unique speaker signatures.
+### Stage 2: Fetch Metadata (`bash train.sh fetch`)
+- Verifies Hugging Face authentication to prevent middle-run login blockers.
+- Uses `get_unique_speakers.py` with multi-threading to extract unique speakers by reading Parquet row-group statistics, bypassing the download of actual audio waves to save massive bandwidth.
 
-### Stage 3: Filter (`bash train.sh filter`)
-- Streams the dataset and decodes audio bytes lazily.
-- Dynamically shims Python 3.12 compatibility for the `vinorm` package (mocking the removed `imp` module using modern `importlib`).
-- Normalizes text and runs G2P phonemization using uniform Northern rules.
-- **Reproducible 95/5 Split**: Splits the records into 95% training and 5% validation sets, writing to `train_manifest.csv` and `val_manifest.csv`.
+### Stage 3: Dataset Prep (`bash train.sh filter`)
+- Streams `thivux/phoaudiobook` from Hugging Face and processes audio via G2P.
+- **Double Manifest Output**:
+  1. Writes standard **4-column pipe-delimited CSV manifests** (`wav|ipa|text|speaker_id`) for user reference, analysis, and auditing.
+  2. Writes clean **2-column pipe-delimited TXT manifests** (`wav|ipa`) inside `data/train_list.txt` and `data/val_list.txt`. This exactly matches StyleTTS2-lite's `FilePathDataset` loader to prevent any positional argument unpack crashes.
 
-### Stage 4: Train (`bash train.sh train`)
-- **Host-Side Vocabulary Surgery**: Executes `scripts/extend_vocab.py` using the host virtualenv. This dynamically scans the manifest for Vietnamese phoneme characters, appends them to `config_vi.json`, and extends `checkpoints/kokoro-v1_1-zh.pth`'s text embedding matrix.
-- **Docker Container Build**: Builds a ROCm container copying both train and validation manifests.
-- **Genuine sequence-reconstruction training (`scripts/run_train.py`)**:
-  - Maps phonemes to **80-band Mel-spectrogram sequences** using log dynamic range compression.
-  - Adds **0.5-second silence boundary padding** to audio clips to stabilize border frames.
-  - Employs independent **optimizer learning rate groups** to prevent catastrophic forgetting: `2e-5` for pretrained weights and `1e-4` for newly initialized layers.
-  - Periodically tracks validation loss and saves the best model checkpoint to `checkpoints/best_model.pth`.
+### Stage 4: Vocab Surgery & Docker Run (`bash train.sh train`)
+- **Phonetically Correct Vocab Surgery**: `extend_vocab.py` extracts phonetic tokens from the manifest using grapheme clusters (`regex.findall(r"\X", text)`), keeping multi-codepoint IPA tokens (like Chao tone markers `˧˩˨`) intact.
+- **Embedding Surgery**: Extends the text embedding weights using the **Centroid Mean + Tiny Normal Perturbation** strategy. This stabilizes gradient updates and prevents catastrophic forgetting.
+- **Dockerfile Build**: Builds the ROCm container, installs NumPy and Cython first, and **compiles `monotonic_align` cython extension in-place** inside the image, resolving runtime import errors.
+- **V3 Training Coordinator**: `run_train.py` dynamically loads the extended `config_vi.json`, generates a compatible `config_vi.yaml`, **mathematically aligns** the symbol list order to match embedding rows, and launches `/opt/StyleTTS2/train.py` from `/opt/StyleTTS2` as the current working directory.
+- **Joint Training Engine**: StyleTTS2's official script manages:
+  - GPU-accelerated JDCNet `pitch_extractor` and log normal energy extraction.
+  - Monotonic Alignment Search (MAS) inside the alignment block.
+  - Discriminator updates (`msd`, `mpd`) and generator training loops with adversarial and feature losses.
 
 ---
 
 ## 3. How to Execute Training
 
-### A. Running in Smoke Test Mode (Validation)
-To quickly test the entire dataset-to-training loop over a small slice of 50 samples:
+### A. Run a Fast smoke-test (Validation)
+To verify the entire pipeline, build the Docker container, run embedding surgery, compile cython modules, and train for 30 steps:
 ```bash
-# Run the entire pipeline in dry-run/smoke test mode
-export SMOKE_TEST=true
-bash train.sh all
+bash train.sh --smoke-test
 ```
 
-### B. Running the Staged Production Pipeline
-For full-scale training:
+### B. Run Production Training
+To execute the complete high-fidelity pipeline on your Strix Halo APU:
 ```bash
-# 1. Prepare environment
-bash train.sh setup
+# Run everything sequentially
+bash train.sh
+```
 
-# 2. Extract statistics
-bash train.sh fetch
+Or execute stage-by-stage:
+```bash
+# Stage 1: Setup virtualenv and system parameters
+bash train.sh --stage setup
 
-# 3. Process, G2P, and split the dataset
-bash train.sh filter
+# Stage 2: Fetch Parquet file stats
+bash train.sh --stage fetch
 
-# 4. Perform vocabulary surgery, build Docker, and run training
-bash train.sh train
+# Stage 3: Perceptual filter and partition dataset
+bash train.sh --stage filter
+
+# Stage 4: Vocab surgery, Docker compile, and run training
+bash train.sh --stage train
 ```

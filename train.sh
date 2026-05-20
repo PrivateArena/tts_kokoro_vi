@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Northern Vietnamese KokoroTTS — Fine-Tuning Suite
+# Northern Vietnamese KokoroTTS — Fine-Tuning Suite (V3)
 # Target: Ryzen AI MAX 395+ (Strix Halo, RDNA4 iGPU, ROCm 6.2+)
 #
 # Usage:
@@ -137,8 +137,6 @@ run_setup() {
         PyYAML
 
     # PyTorch — ROCm build for Strix Halo (gfx1150 / RDNA4)
-    # If ROCm 6.2 wheels are not yet published for your exact gfx version,
-    # install with HSA_OVERRIDE_GFX_VERSION=11.5.0 at runtime (set in Dockerfile).
     pip install -q \
         torch torchvision torchaudio \
         --index-url https://download.pytorch.org/whl/rocm6.2 \
@@ -188,8 +186,8 @@ PYEOF
     # 3. Speaker metadata extraction
     if [[ ! -f "${DATA_DIR}/unique_speakers.txt" ]]; then
         info "Extracting unique speaker list (metadata-only, no audio download) …"
-        # Copy script to project dir and run from there
-        cp "${SCRIPT_DIR}/get_unique_speakers.py" "${SCRIPTS_DIR}/"
+        # Copy script from scripts_v3 to project dir and run from there
+        cp "${SCRIPT_DIR}/scripts/get_unique_speakers.py" "${SCRIPTS_DIR}/" || cp "${SCRIPT_DIR}/scripts_v2/get_unique_speakers.py" "${SCRIPTS_DIR}/"
         pushd "${PROJECT_DIR}" > /dev/null
         python3 scripts/get_unique_speakers.py
         popd > /dev/null
@@ -217,9 +215,7 @@ run_filter() {
 # ==============================================================================
 # Verified Northern Vietnamese Speakers Whitelist
 # Edit this file before running the filter stage.
-# Lines starting with '#' or blank lines are ignored.
 # Speaker names must match exactly what appears in the dataset.
-# Run Stage 2 (fetch) first to get the full speaker list.
 # ==============================================================================
 Nguyễn_Văn_Khỏa
 Lê_Đức_Quân
@@ -240,8 +236,8 @@ EOF
     NSPK=$(grep -v '^#' "${VERIFIED}" | grep -v '^$' | wc -l)
     ok "Using ${NSPK} whitelisted Northern speakers."
 
-    # 2. Copy and run dataset preparation script
-    cp "${SCRIPT_DIR}/prepare_dataset.py" "${SCRIPTS_DIR}/"
+    # 2. Copy and run dataset preparation script (V3)
+    cp "${SCRIPT_DIR}/scripts_v3/prepare_dataset.py" "${SCRIPTS_DIR}/prepare_dataset.py"
 
     SMOKE_FLAG=""
     [[ "${SMOKE_TEST}" == "true" ]] && SMOKE_FLAG="--smoke-test"
@@ -287,15 +283,15 @@ run_train() {
         ok "Base config.json already present."
     fi
 
-    # 2. Copy scripts into project
-    info "Copying training scripts …"
-    cp "${SCRIPT_DIR}/run_train.py"    "${SCRIPTS_DIR}/"
-    cp "${SCRIPT_DIR}/extend_vocab.py" "${SCRIPTS_DIR}/"
+    # 2. Copy scripts into project from scripts_v3
+    info "Copying V3 training scripts …"
+    cp "${SCRIPT_DIR}/scripts_v3/run_train.py"    "${SCRIPTS_DIR}/run_train.py"
+    cp "${SCRIPT_DIR}/scripts_v3/extend_vocab.py" "${SCRIPTS_DIR}/extend_vocab.py"
 
-    # 3. Generate Dockerfile
-    info "Writing Dockerfile …"
+    # 3. Generate Dockerfile with custom Cython monotonic_align build step
+    info "Writing Dockerfile (with dynamic Cython compilation) …"
     cat > "${PROJECT_DIR}/Dockerfile" << 'DOCKERFILE'
-# ── KokoroTTS Vietnamese — ROCm Training Image ──────────────────────────────
+# ── KokoroTTS Vietnamese — ROCm Training Image (V3) ────────────────────────
 # Target: Ryzen AI MAX 395+ (Strix Halo RDNA4, gfx1150)
 FROM rocm/pytorch:rocm6.2_ubuntu22.04_py3.10_pytorch_release_2.3.0
 
@@ -307,19 +303,26 @@ ENV HSA_OVERRIDE_GFX_VERSION=11.5.0 \
     GPU_MAX_HEAP_SIZE=100 \
     ROCR_VISIBLE_DEVICES=0 \
     HIP_VISIBLE_DEVICES=0 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/StyleTTS2:/opt/StyleTTS2/monotonic_align:$PYTHONPATH
 
 WORKDIR /workspace
 
-# System deps
+# System build and runtime dependencies
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
-        git curl ffmpeg sox libsndfile1 \
+        git curl ffmpeg sox libsndfile1 build-essential python3-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Install NumPy and Cython first (required to build Cython extensions)
+RUN pip install --no-cache-dir numpy cython
 
 # Clone StyleTTS2 (the actual model code)
 RUN git clone --depth 1 https://github.com/yl4579/StyleTTS2.git /opt/StyleTTS2
 
-# Python dependencies
+# Compile monotonic_align inplace (CRITICAL for training without import failures)
+RUN cd /opt/StyleTTS2/monotonic_align && python3 setup.py build_ext --inplace
+
+# Install remainder of Python dependencies
 COPY requirements_train.txt /tmp/requirements_train.txt
 RUN pip install --no-cache-dir -r /tmp/requirements_train.txt
 
@@ -351,6 +354,9 @@ datasets
 huggingface_hub
 fsspec
 pyarrow
+scipy
+matplotlib
+munch
 REQEOF
 
     # 5. Vocabulary embedding surgery (run on host inside venv)
@@ -383,8 +389,9 @@ REQEOF
             "${DOCKER_IMAGE}" \
             python3 /workspace/scripts/run_train.py \
                 --smoke-test \
-                --batch-size 4 \
-                --max-steps  30
+                --batch-size 2 \
+                --save-every 1 \
+                --log-every 1
         ok "Smoke test passed."
         exit 0
     fi
@@ -402,8 +409,7 @@ REQEOF
     fi
 
     # 9. Launch Stage 1 training
-    info "Launching Stage 1 training (200k steps, batch 32, grad-accum 2 = effective 64) …"
-    info "With 128 GB unified VRAM this should take ~18–24 hours."
+    info "Launching Stage 1 training via V3 Coordinator in Docker container …"
     sudo docker run --rm -it \
         --device=/dev/kfd \
         --device=/dev/dri \
@@ -418,19 +424,10 @@ REQEOF
         -v "${PROJECT_DIR}:/workspace" \
         "${DOCKER_IMAGE}" \
         python3 /workspace/scripts/run_train.py \
-            --stage         1 \
-            --batch-size    32 \
-            --grad-accum    2 \
-            --max-steps     200000 \
-            --warmup-steps  5000 \
-            --cosine-t0     50000 \
-            --lr-encoder    5e-6 \
-            --lr-style      1e-5 \
-            --lr-decoder    2e-5 \
-            --lr-new        1e-4 \
-            --save-every    5000 \
-            --val-every     5000 \
-            --log-every     100 \
+            --batch-size    16 \
+            --epochs        50 \
+            --save-every    1 \
+            --log-every     10 \
             ${RESUME_FLAG}
 }
 
