@@ -183,10 +183,49 @@ def main():
         "    print('DNSMOS model already exists.')"
     ]))
 
-    # 7. Step 6: Vocabulary Surgery cell
+    # 8. Step 6: Preprocessing cell
     notebook["cells"].append(create_markdown_cell([
-        "## Step 6: Vocabulary Surgery & Base Checkpoint Fetching",
-        "We download the multilingual Chinese/English Kokoro baseline and run surgical embedding adaptations, expanding the model's text encoder to align perfectly with all Northern Vietnamese IPA symbols and tones."
+        "## Step 6: Stream & Filter the Dataset (PhoAudioBook)",
+        "We execute the optimized dataset preprocessing pipeline (`prepare_dataset.py`). This generates the audio WAV files and constructs `train_manifest.csv` containing all IPA phonemic transcriptions.",
+        "",
+        "### Drive Integration Mechanism:",
+        "To protect your progress, we **symlink your Google Drive workspace** to `kokoro_vietnamese/data`. All downloaded parquets, output WAV files, train/val lists, and `processed_records.json` progress markers will be written directly to your Drive.",
+        "If Colab crashes or the runtime disconnects, simply re-run Step 1 and Step 6. The preprocessor will **instantly resume** exactly where it left off, avoiding redundant downloads and processing time!"
+    ]))
+    notebook["cells"].append(create_code_cell([
+        "# 1. Symlink Colab data directory to Google Drive for persistent checkpoints",
+        "import os",
+        "from pathlib import Path",
+        "",
+        "local_data_path = Path('/content/tts_kokoro_vi/kokoro_vietnamese/data')",
+        "drive_data_path = Path(DRIVE_DIR) / 'data'",
+        "os.makedirs(drive_data_path, exist_ok=True)",
+        "",
+        "# Backup existing local template verified northern speakers list if exists",
+        "if os.path.exists(local_data_path / 'verified_northern_speakers.txt') and not os.path.exists(drive_data_path / 'verified_northern_speakers.txt'):",
+        "    import shutil",
+        "    shutil.copy(local_data_path / 'verified_northern_speakers.txt', drive_data_path / 'verified_northern_speakers.txt')",
+        "",
+        "# Remove local data dir and symlink to Google Drive",
+        "if local_data_path.exists() and not local_data_path.is_symlink():",
+        "    !rm -rf {local_data_path}",
+        "if not local_data_path.exists():",
+        "    !ln -s {drive_data_path} {local_data_path}",
+        "    print('Symlink to Google Drive active!')",
+        "",
+        "# 2. Run dataset preprocessing with smoke-test option",
+        "# To run the full dataset pre-processing, omit the --smoke-test flag.",
+        "smoke_test = True #@param {type:\"boolean\"}",
+        "smoke_flag = \"--smoke-test\" if smoke_test else \"\"",
+        "",
+        "# Launch preprocessor",
+        "!DATA_ROOT=kokoro_vietnamese/data python3 scripts_v3/prepare_dataset.py {smoke_flag}"
+    ]))
+
+    # 7. Step 7: Vocabulary Surgery cell
+    notebook["cells"].append(create_markdown_cell([
+        "## Step 7: Vocabulary Surgery & Base Checkpoint Fetching",
+        "Now that `train_manifest.csv` has been generated, we download the multilingual Chinese/English Kokoro baseline and run surgical embedding adaptations, expanding the model's text encoder to align perfectly with all Northern Vietnamese IPA symbols and tones found in the dataset."
     ]))
     notebook["cells"].append(create_code_cell([
         "# 1. Download base pth & config from HuggingFace",
@@ -223,45 +262,6 @@ def main():
         "!python3 scripts_v3/extend_vocab.py --project-dir kokoro_vietnamese",
         "",
         "print('Vocabulary surgery completed successfully!')"
-    ]))
-
-    # 8. Step 7: Preprocessing cell
-    notebook["cells"].append(create_markdown_cell([
-        "## Step 7: Stream & Filter the Dataset (PhoAudioBook)",
-        "We execute the optimized dataset preprocessing pipeline (`prepare_dataset.py`).",
-        "",
-        "### Drive Integration Mechanism:",
-        "To protect your progress, we **symlink your Google Drive workspace** to `kokoro_vietnamese/data`. All downloaded parquets, output WAV files, train/val lists, and `processed_records.json` progress markers will be written directly to your Drive.",
-        "If Colab crashes or the runtime disconnects, simply re-run Step 1 and Step 7. The preprocessor will **instantly resume** exactly where it left off, avoiding redundant downloads and processing time!"
-    ]))
-    notebook["cells"].append(create_code_cell([
-        "# 1. Symlink Colab data directory to Google Drive for persistent checkpoints",
-        "import os",
-        "from pathlib import Path",
-        "",
-        "local_data_path = Path('/content/tts_kokoro_vi/kokoro_vietnamese/data')",
-        "drive_data_path = Path(DRIVE_DIR) / 'data'",
-        "os.makedirs(drive_data_path, exist_ok=True)",
-        "",
-        "# Backup existing local template verified northern speakers list if exists",
-        "if os.path.exists(local_data_path / 'verified_northern_speakers.txt') and not os.path.exists(drive_data_path / 'verified_northern_speakers.txt'):",
-        "    import shutil",
-        "    shutil.copy(local_data_path / 'verified_northern_speakers.txt', drive_data_path / 'verified_northern_speakers.txt')",
-        "",
-        "# Remove local data dir and symlink to Google Drive",
-        "if local_data_path.exists() and not local_data_path.is_symlink():",
-        "    !rm -rf {local_data_path}",
-        "if not local_data_path.exists():",
-        "    !ln -s {drive_data_path} {local_data_path}",
-        "    print('Symlink to Google Drive active!')",
-        "",
-        "# 2. Run dataset preprocessing with smoke-test option",
-        "# To run the full dataset pre-processing, omit the --smoke-test flag.",
-        "smoke_test = True #@param {type:\"boolean\"}",
-        "smoke_flag = \"--smoke-test\" if smoke_test else \"\"",
-        "",
-        "# Launch preprocessor",
-        "!DATA_ROOT=kokoro_vietnamese/data python3 scripts_v3/prepare_dataset.py {smoke_flag}"
     ]))
 
     # 9. Step 8: Clone & Compile StyleTTS2 cell
