@@ -1,5 +1,9 @@
 ## Research analysis.
 
+It's another "success" attempt to finetune Kokoro-English to Vietnamese: https://huggingface.co/dangtr0408/StyleTTS2-lite-vi
+- It uses viVoice
+- It uses Kokoro English Base model - We use Kokoro ZH Chinese Base Model because both Vietnamese and Chinese are tonal language
+- It uses both Northern and Southern audio
 file:///media/jang/home/Deve/tts_kokoro_vi/failure_point_comparison_dangtr0408_vs_ours.svg
 
 ---

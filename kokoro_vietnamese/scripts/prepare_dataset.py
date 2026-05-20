@@ -17,6 +17,20 @@ import soundfile as sf
 import librosa
 import numpy as np
 from datasets import load_dataset
+# ── Python 3.12 Compatibility Shim for vinorm ───────────────────────────
+import sys
+import types
+import importlib.util
+def mock_find_module(name):
+    spec = importlib.util.find_spec(name)
+    if spec is None:
+        raise ImportError(f"No module named '{name}'")
+    path = os.path.dirname(spec.origin) if spec.origin else spec.submodule_search_locations[0]
+    return (None, path, None)
+imp_mock = types.ModuleType("imp")
+imp_mock.find_module = mock_find_module
+sys.modules["imp"] = imp_mock
+
 from vinorm import TTSnorm
 import datasets
 
@@ -265,14 +279,27 @@ def main():
             log.info("Reached max-samples cap (%d). Stopping.", max_samples)
             break
 
-    # ── Write manifest ─────────────────────────────────────────────────────
+    # ── Split and write train/val manifests ──────────────────────────────────
+    import random
+    random.seed(42)  # ensure reproducible train/val splits
+    random.shuffle(records)
+
+    val_size = max(1, int(len(records) * 0.05)) if len(records) >= 20 else 1
+    val_records = records[:val_size]
+    train_records = records[val_size:]
+
+    val_manifest_path = manifest_path.parent / "val_manifest.csv"
+
     with open(manifest_path, "w", newline="", encoding="utf-8") as f:
-        csv.writer(f, delimiter="|").writerows(records)
+        csv.writer(f, delimiter="|").writerows(train_records)
+
+    with open(val_manifest_path, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f, delimiter="|").writerows(val_records)
 
     log.info(
-        "Done. Retained %d Northern samples → %s\n"
+        "Done. Saved %d training samples to %s and %d validation samples to %s\n"
         "Rejection breakdown: %s",
-        retained_idx, manifest_path, rejected,
+        len(train_records), manifest_path, len(val_records), val_manifest_path, rejected,
     )
 
 

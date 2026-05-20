@@ -188,9 +188,18 @@ run_train() {
     info "Copying Dockerfile"
     cp Dockerfile "${PROJECT_DIR}/Dockerfile"
 
-    # 3. Copy Training Controller Script
-    info "Copying run_train.py"
+    # 3. Copy scripts
+    info "Copying scripts"
     cp scripts/run_train.py "${PROJECT_DIR}/scripts/run_train.py"
+    cp scripts/extend_vocab.py "${PROJECT_DIR}/scripts/extend_vocab.py"
+
+    # Run Vocabulary Embedding Surgery (Host Environment)
+    info "Running vocabulary embedding surgery on base checkpoint..."
+    # shellcheck disable=SC1091
+    source "${PROJECT_DIR}/venv/bin/activate"
+    python3 "${PROJECT_DIR}/scripts/extend_vocab.py"
+    deactivate
+    ok "Vocabulary embedding surgery completed!"
 
     # 4. Build Docker container
     info "Building ROCm Docker image: ${DOCKER_IMAGE}..."
