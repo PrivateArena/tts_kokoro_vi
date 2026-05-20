@@ -123,12 +123,14 @@ def generate_yaml_config(
                 "seq_len": 192
             },
             "decoder": {
-                "type": "hifigan",
+                "type": "istftnet",
                 "resblock_kernel_sizes": [3, 7, 11],
-                "upsample_rates": [10, 5, 3, 2],
+                "upsample_rates": [10, 6],
                 "upsample_initial_channel": 512,
                 "resblock_dilation_sizes": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
-                "upsample_kernel_sizes": [20, 10, 6, 4]
+                "upsample_kernel_sizes": [20, 12],
+                "gen_istft_n_fft": 20,
+                "gen_istft_hop_size": 5
             },
             "slm": {
                 "model": "microsoft/wavlm-base-plus",
