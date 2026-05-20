@@ -219,7 +219,7 @@ def main():
         "smoke_flag = \"--smoke-test\" if smoke_test else \"\"",
         "",
         "# Launch preprocessor",
-        "!DATA_ROOT=kokoro_vietnamese/data python3 scripts_v3/prepare_dataset.py {smoke_flag}"
+        "!python3 scripts_v3/prepare_dataset.py --data-root kokoro_vietnamese/data {smoke_flag}"
     ]))
 
     # 7. Step 7: Vocabulary Surgery cell
