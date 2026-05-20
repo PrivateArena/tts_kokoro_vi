@@ -229,13 +229,14 @@ run_train() {
         --ipc=host \
         --shm-size=32g \
         -e HSA_OVERRIDE_GFX_VERSION=11.5.0 \
-        -e PYTORCH_HIP_ALLOC_CONF=expandable_segments:True \
+        -e HSA_ENABLE_SDMA=0 \
         -v "${PROJECT_DIR}:/workspace" \
         "${DOCKER_IMAGE}" \
         python3 /workspace/scripts/run_train.py \
             --stage 1 \
-            --batch_size 16 \
-            --max_steps 100000 \
+            --batch-size 64 \
+            --warmup-steps 2000 \
+            --max-steps 100000 \
             ${RESUME_FLAG}
 }
 

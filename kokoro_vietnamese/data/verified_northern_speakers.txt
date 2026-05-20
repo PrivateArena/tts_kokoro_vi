@@ -1,0 +1,15 @@
+# ==============================================================================
+# Verified Northern Vietnamese Speakers Whitelist
+# Keep only the speaker names you want to include in the training dataset.
+# Lines starting with '#' or empty lines are ignored.
+# ==============================================================================
+Nguyễn_Văn_Khỏa
+Lê_Đức_Quân
+Diễm_Hân
+Mai_Anh
+Đông_Quân
+Thoan_Đây
+Ngọc_Diễm
+Thanh_Thủy
+Vy_Vy
+Tuấn_Anh

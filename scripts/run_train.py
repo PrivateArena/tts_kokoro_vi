@@ -34,10 +34,10 @@ def parse_args():
                    help="Resume from a mid-run checkpoint (.pth with step/model/optimizer).")
     p.add_argument("--stage",       type=int, default=1, choices=[1, 2, 3],
                    help="Training stage (1=acoustic pre-train, 2=diffusion, 3=joint).")
-    p.add_argument("--batch-size",  type=int, default=16)
+    p.add_argument("--batch-size",  type=int, default=64)
     p.add_argument("--max-steps",   type=int, default=100_000)
     p.add_argument("--lr",          type=float, default=2e-5)
-    p.add_argument("--warmup-steps",type=int, default=1_000,
+    p.add_argument("--warmup-steps",type=int, default=2_000,
                    help="Linear LR warm-up steps.")
     p.add_argument("--save-every",  type=int, default=5_000,
                    help="Save a checkpoint every N steps.")
@@ -237,14 +237,26 @@ def main():
     tokenizer  = AutoTokenizer.from_pretrained("vinai/xphonebert-base")
     xphonebert = AutoModel.from_pretrained("vinai/xphonebert-base").to(device)
 
+    # Compile XPhoneBERT encoder for huge RDNA 3.5 speedups (AOTriton/FlashAttention)
+    # Skip compilation in smoke test to avoid compile latency exceeding run duration
+    if device == "cuda" and not args.smoke_test:
+        log.info("Compiling XPhoneBERT encoder for optimized ROCm RDNA 3.5 execution…")
+        try:
+            xphonebert = torch.compile(xphonebert, backend="inductor", mode="reduce-overhead")
+            log.info("XPhoneBERT compilation successfully initialized.")
+        except Exception as e:
+            log.warning("Could not compile XPhoneBERT: %s. Proceeding with eager mode.", e)
+
     # ── Dataset + loader ──────────────────────────────────────────────────
     dataset = ViNorthDataset(args.manifest, tokenizer)
+    # Unified memory (APU) shares memory space, making pin_memory unnecessary/inefficient.
     loader  = DataLoader(
         dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=min(4, os.cpu_count() or 1),
-        pin_memory=(device == "cuda"),
+        num_workers=min(8, os.cpu_count() or 1),
+        prefetch_factor=4,
+        pin_memory=False,
         collate_fn=collate_fn,
         persistent_workers=True,   # avoid worker restart overhead each epoch
     )
