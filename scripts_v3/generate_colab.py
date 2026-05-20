@@ -81,11 +81,16 @@ def main():
         "We clone the public workspace repository `PrivateArena/tts_kokoro_vi` into our active Colab environment."
     ]))
     notebook["cells"].append(create_code_cell([
-        "!git clone https://github.com/PrivateArena/tts_kokoro_vi.git /content/tts_kokoro_vi",
-        "%cd /content/tts_kokoro_vi",
+        "import os",
+        "if not os.path.exists('/content/tts_kokoro_vi'):",
+        "    !git clone https://github.com/PrivateArena/tts_kokoro_vi.git /content/tts_kokoro_vi",
+        "else:",
+        "    print('Repository already cloned. Resetting and pulling latest changes...')",
+        "    !git -C /content/tts_kokoro_vi reset --hard",
+        "    !git -C /content/tts_kokoro_vi pull",
         "",
-        "# Verify repository files are present",
-        "!ls -la"
+        "%cd /content/tts_kokoro_vi",
+        "!git status"
     ]))
 
     # 4. Dependency cell
