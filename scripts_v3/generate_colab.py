@@ -334,7 +334,9 @@ def main():
         "train_flag = \"--smoke-test --batch-size 2\" if smoke_test_train else \"--batch-size 16 --epochs 50\"",
         "",
         "# Execute",
-        "!PYTHONPATH=/opt/StyleTTS2:/opt/StyleTTS2/monotonic_align:$PYTHONPATH python3 kokoro_vietnamese/scripts/run_train.py {train_flag} --save-every 1 --log-every 10 --project-dir kokoro_vietnamese"
+        "import os",
+        "os.environ['PYTHONPATH'] = '/opt/StyleTTS2:/opt/StyleTTS2/monotonic_align:' + os.environ.get('PYTHONPATH', '')",
+        "!python3 kokoro_vietnamese/scripts/run_train.py {train_flag} --save-every 1 --log-every 10 --project-dir kokoro_vietnamese"
     ]))
 
     # Write notebook file
