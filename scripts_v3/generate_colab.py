@@ -223,7 +223,8 @@ def main():
         "smoke_flag = \"--smoke-test\" if smoke_test else \"\"",
         "",
         "# Launch preprocessor",
-        "!python3 scripts_v3/prepare_dataset.py --data-root kokoro_vietnamese/data {smoke_flag}"
+        "os.environ['DATA_ROOT'] = 'kokoro_vietnamese/data'",
+        "!python3 scripts_v3/prepare_dataset.py {smoke_flag}"
     ]))
 
     # 7. Step 7: Vocabulary Surgery cell
@@ -315,6 +316,12 @@ def main():
         "Checkpoints are saved inside `/content/drive/MyDrive/tts_kokoro_vi/checkpoints` persistently, enabling resumption if the cell gets disconnected!"
     ]))
     notebook["cells"].append(create_code_cell([
+        "# Self-healing check: Move datasets from root to project subfolder if they were preprocessed there",
+        "import shutil",
+        "if os.path.exists('data') and not os.path.exists('kokoro_vietnamese/data'):",
+        "    print('Self-healing: Moving data directory from root to kokoro_vietnamese/data ...')",
+        "    !mv data kokoro_vietnamese/",
+        "",
         "# Symlink checkpoints folder to Google Drive so checkpoints persist across restarts",
         "local_ckpt_path = Path('/content/tts_kokoro_vi/kokoro_vietnamese/checkpoints')",
         "drive_ckpt_path = Path(DRIVE_DIR) / 'checkpoints'",
