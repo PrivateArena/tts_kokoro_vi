@@ -78,19 +78,42 @@ CENTRAL_RE  = re.compile("|".join(_CENTRAL_WORDS),  re.IGNORECASE)
 
 
 def passes_dialect_filter(text: str) -> bool:
-    """
-    Bypass dialect filtering to leverage full dialect-mixed acoustic variety (REAL_COMPARISONS.md).
-    Northern IPA targets are still applied uniformly during phonemization.
-    """
+    """Reject transcripts with obvious Southern or Central blank lexical markers."""
+    if SOUTHERN_RE.search(text):
+        return False
+    if CENTRAL_RE.search(text):
+        return False
     return True
 
 
 # ---------------------------------------------------------------------------
 # Speaker list
 # ---------------------------------------------------------------------------
-def load_verified_speakers() -> Optional[set]:
-    """Bypass speaker filtering to maximize data scale and acoustic diversity."""
-    return None
+def load_verified_speakers(data_root: Path | None = None) -> Optional[set]:
+    """Load the Northern speaker whitelist so the filter is actually active.
+    
+    Returns None only when the whitelist file is absent (unlimited pass-through).
+    Pass data_root=DATA_ROOT to lock to this project's verified list.
+    """
+    fpath = Path(data_root) / "verified_northern_speakers.txt" if data_root else VERIFIED_SPEAKERS_FILE
+    if not fpath.exists():
+        log.warning(
+            "verified_northern_speakers.txt not found at %s — speaker whitelist active, "
+            "UNLIMITED pass-accept (no filtering). Create the file or pass --bypass-speaker-filter.",
+            fpath,
+        )
+        return None
+    speakers = set()
+    with open(fpath, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                speakers.add(line)
+    if not speakers:
+        log.warning("verified_northern_speakers.txt is empty — unlimited pass-accept.")
+        return None
+    log.info("Speaker whitelist active: %d verified Northern speakers.", len(speakers))
+    return speakers
 
 
 # ---------------------------------------------------------------------------
@@ -189,11 +212,12 @@ _CLASSIFIER = None
 
 class DialectAuditor:
     """Manages regional dialect tagging, cache loading/saving, and company speaker filtering."""
-    def __init__(self, data_root: Path, northern_speakers: set):
+    def __init__(self, data_root: Path, northern_speakers: set, all_dialects: bool = False):
         self.cache_file = data_root / "speaker_dialects.json"
         self.northern_speakers = northern_speakers
-        self.dialects = self._load_cache()
-        self.votes = defaultdict(list)
+        self.all_dialects    = all_dialects
+        self.dialects        = self._load_cache()
+        self.votes           = defaultdict(list)
         self.processed_counts = defaultdict(int)
         # Exponential indices to sample spread-out chapters/narrators
         self.audit_indices = {0, 9, 29, 69, 149}
@@ -323,6 +347,10 @@ def parse_args():
                    help="Alias for --max-samples 50 (fast CI check).")
     p.add_argument("--workers",     type=int, default=4,
                    help="Parallel workers for audio processing (default: 4).")
+    p.add_argument("--bypass-speaker-filter", action="store_true",
+                   help="Skip speaker whitelist — accept all speakers.")
+    p.add_argument("--all-dialects", action="store_true",
+                   help="Accept South + Central dialects with dialect-correct G2P.")
     return p.parse_args()
 
 
@@ -339,11 +367,24 @@ def main():
     manifest_path = data_root / "train_manifest.csv"
     processed_dir.mkdir(parents=True, exist_ok=True)
 
-    verified_speakers = load_verified_speakers()
+    # Speaker & dialect setup
+    if args.bypass_speaker_filter:
+        verified_speakers = None
+        log.info("Speaker whitelist BYPASSED (--bypass-speaker-filter).")
+    else:
+        verified_speakers = load_verified_speakers(data_root)
+
     northern_speakers = load_northern_speakers(data_root)
 
-    # Initialize the modular Dialect Auditor
-    auditor = DialectAuditor(data_root, northern_speakers)
+    # DialectAuditor: when --bypass-speaker-filter is active, whitelist is empty so
+    # Wav2Vec2 classifier handles tagging; when it's off, whitelisted speakers skip Wav2Vec2.
+    # With --all-dialects, South/Central speakers are retained with their own dialect G2P.
+    if not args.all_dialects:
+        log.info("Northern-only mode: South & Central speakers will be rejected by Wav2Vec2 tag.")
+    else:
+        log.info("--all-dialects: South & Central speakers retained with dialect-correct G2P.")
+
+    auditor = DialectAuditor(data_root, northern_speakers, all_dialects=args.all_dialects)
 
     log.info("Streaming dataset 'thivux/phoaudiobook'…")
     ds = load_dataset("thivux/phoaudiobook", split="train", streaming=True)

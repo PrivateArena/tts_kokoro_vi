@@ -179,9 +179,9 @@ def main():
     )
 
     # ── Verify and Launch official train.py ──────────────────────────────────
-    official_train_py = Path("/opt/StyleTTS2/train.py")
+    official_train_py = Path("/opt/StyleTTS2/train_finetune.py")
     if not official_train_py.exists():
-        log.error("Official StyleTTS2 train.py not found at /opt/StyleTTS2/train.py!")
+        log.error("Official StyleTTS2 train_finetune.py not found at /opt/StyleTTS2/train_finetune.py!")
         sys.exit(1)
 
     log.info("Launching official StyleTTS2 training script inside Docker environment...")
