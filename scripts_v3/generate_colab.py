@@ -335,7 +335,26 @@ def main():
         "        code = code.replace(\"iters = state['iters']\", \"iters = state.get('iters', 0)\")",
         "        with open(models_file, 'w', encoding='utf-8') as f:",
         "            f.write(code)",
-        "        print('models.py standard state_dict fallback patch applied successfully!')"
+        "        print('models.py standard state_dict fallback patch applied successfully!')",
+        "",
+        "# 8. Programmatically update PLBERT config's vocab_size to match our extended vocabulary size",
+        "plbert_config_file = '/content/StyleTTS2/Utils/PLBERT/config.yml'",
+        "config_json_file = '/content/tts_kokoro_vi/kokoro_vietnamese/config_vi.json'",
+        "if not os.path.exists(config_json_file):",
+        "    config_json_file = '/content/tts_kokoro_vi/config_vi.json'",
+        "if os.path.exists(plbert_config_file) and os.path.exists(config_json_file):",
+        "    with open(config_json_file, 'r', encoding='utf-8') as f:",
+        "        config_vi = json.load(f)",
+        "    new_vocab_size = len(config_vi.get('vocab', {}))",
+        "    with open(plbert_config_file, 'r', encoding='utf-8') as f:",
+        "        plbert_code = f.read()",
+        "    import yaml",
+        "    plbert_data = yaml.safe_load(plbert_code)",
+        "    if plbert_data and 'model_params' in plbert_data:",
+        "        plbert_data['model_params']['vocab_size'] = new_vocab_size",
+        "        with open(plbert_config_file, 'w', encoding='utf-8') as f:",
+        "            yaml.dump(plbert_data, f, default_flow_style=False)",
+        "        print(f'Successfully updated PLBERT vocab_size to {new_vocab_size} in config.yml!')"
     ]))
 
     # 10. Step 9: Launch training cell
