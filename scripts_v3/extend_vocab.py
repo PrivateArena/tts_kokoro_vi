@@ -184,7 +184,12 @@ def perform_surgery(
     # 4. Perform surgery on embedding weights
     embed_dict = params.get("text_encoder", {}) if is_grouped else params
     embed_key = None
-    EMBED_PATTERNS = ["embed.weight", "embedding.weight"]
+    EMBED_PATTERNS = [
+        "bert.embeddings.word_embeddings.weight",
+        "text_encoder.bert.embeddings.word_embeddings.weight",
+        "embed.weight",
+        "embedding.weight",
+    ]
     if not is_grouped:
         EMBED_PATTERNS = ["text_encoder." + p for p in EMBED_PATTERNS] + EMBED_PATTERNS
 
@@ -193,8 +198,9 @@ def perform_surgery(
             embed_key = pattern
             break
     if not embed_key:
-        for k in embed_dict:
-            if "embed" in k.lower() or "embedding" in k.lower():
+        for k in embed_dict.keys():
+            k_lower = k.lower()
+            if "word_embeddings" in k_lower or "embed.weight" in k_lower or "embedding.weight" in k_lower or "embed" in k_lower:
                 embed_key = k
                 break
     if not embed_key:
