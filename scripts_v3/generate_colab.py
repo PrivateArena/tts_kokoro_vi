@@ -354,7 +354,30 @@ def main():
         "        plbert_data['model_params']['vocab_size'] = new_vocab_size",
         "        with open(plbert_config_file, 'w', encoding='utf-8') as f:",
         "            yaml.dump(plbert_data, f, default_flow_style=False)",
-        "        print(f'Successfully updated PLBERT vocab_size to {new_vocab_size} in config.yml!')"
+        "        print(f'Successfully updated PLBERT vocab_size to {new_vocab_size} in config.yml!')",
+        "",
+        "# 9. Programmatically patch StyleTTS2's Utils/PLBERT/util.py to filter out shape-mismatched parameters before load_state_dict",
+        "plbert_util_file = '/content/StyleTTS2/Utils/PLBERT/util.py'",
+        "if os.path.exists(plbert_util_file):",
+        "    with open(plbert_util_file, 'r', encoding='utf-8') as f:",
+        "        code = f.read()",
+        "    if 'shape-mismatch' not in code and 'bert.state_dict()' not in code:",
+        "        print('Patching PLBERT util.py to skip shape-mismatched parameters ...')",
+        "        # We insert a shape check filter right before bert.load_state_dict(new_state_dict, strict=False)",
+        "        target = 'bert.load_state_dict(new_state_dict, strict=False)'",
+        "        replacement = (",
+        "            '# Shape-mismatch filter to prevent RuntimeError on extended vocab\\n'",
+        "            '    for k in list(new_state_dict.keys()):\\n'",
+        "            '        if k in bert.state_dict():\\n'",
+        "            '            if new_state_dict[k].shape != bert.state_dict()[k].shape:\\n'",
+        "            '                print(f\"[PLBERT Patch] Skipping parameter {k} due to shape mismatch: {new_state_dict[k].shape} vs {bert.state_dict()[k].shape}\")\\n'",
+        "            '                del new_state_dict[k]\\n'",
+        "            '    ' + target",
+        "        )",
+        "        code = code.replace(target, replacement)",
+        "        with open(plbert_util_file, 'w', encoding='utf-8') as f:",
+        "            f.write(code)",
+        "        print('PLBERT shape mismatch self-healing patch applied successfully!')"
     ]))
 
     # 10. Step 9: Launch training cell
