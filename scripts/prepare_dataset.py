@@ -5,6 +5,7 @@ Streams thivux/phoaudiobook, filters by speaker whitelist & dialect blocklists,
 decodes audio, applies SNR check, and normalizes/G2P phonemizes.
 """
 import os
+import json
 import csv
 import re
 import logging
@@ -16,7 +17,13 @@ from typing import Optional
 import soundfile as sf
 import librosa
 import numpy as np
+import torch
+from transformers import pipeline
 from datasets import load_dataset
+
+# Limit PyTorch CPU thread pool to prevent 50%+ CPU spikes on multi-core CPUs like 9700X
+torch.set_num_threads(1)
+torch.set_num_interop_threads(1)
 # ── Python 3.12 Compatibility Shim for vinorm ───────────────────────────
 import sys
 import types
@@ -71,11 +78,10 @@ CENTRAL_RE  = re.compile("|".join(_CENTRAL_WORDS),  re.IGNORECASE)
 
 
 def passes_dialect_filter(text: str) -> bool:
-    """Check text against dialect blocklists using regex (word-boundary safe)."""
-    if SOUTHERN_RE.search(text):
-        return False
-    if CENTRAL_RE.search(text):
-        return False
+    """
+    Bypass dialect filtering to leverage full dialect-mixed acoustic variety (REAL_COMPARISONS.md).
+    Northern IPA targets are still applied uniformly during phonemization.
+    """
     return True
 
 
@@ -83,20 +89,8 @@ def passes_dialect_filter(text: str) -> bool:
 # Speaker list
 # ---------------------------------------------------------------------------
 def load_verified_speakers() -> Optional[set]:
-    if not VERIFIED_SPEAKERS_FILE.exists():
-        log.warning(
-            "Verified speakers file %s not found — speaker pre-filtering disabled.",
-            VERIFIED_SPEAKERS_FILE,
-        )
-        return None
-    speakers = set()
-    with open(VERIFIED_SPEAKERS_FILE, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#"):
-                speakers.add(line)
-    log.info("Loaded %d verified Northern speakers.", len(speakers))
-    return speakers
+    """Bypass speaker filtering to maximize data scale and acoustic diversity."""
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -161,16 +155,160 @@ except ImportError:
     _G2P_AVAILABLE = False
 
 
-def to_ipa(text: str) -> str:
-    """Normalise Vietnamese text and convert to Northern-dialect IPA."""
+def to_ipa(text: str, dialect: str = "north") -> str:
+    """Normalise Vietnamese text and convert to Northern or Southern dialect IPA."""
     if not _G2P_AVAILABLE:
         return ""
     try:
         normalized = TTSnorm(text, punc=True, unknown=False, lower=False)
-        return _vi2IPA(normalized, dialect="north")
+        return _vi2IPA(normalized, dialect=dialect)
     except Exception as e:
-        log.warning("G2P failed for '%.40s': %s", text, e)
+        log.warning("G2P failed for '%.40s' with dialect %s: %s", text, dialect, e)
         return ""
+
+
+# Helper to load Northern speakers for dynamic tagging
+def load_northern_speakers(data_root: Path) -> set:
+    fpath = data_root / "verified_northern_speakers.txt"
+    if not fpath.exists():
+        log.warning("Northern speaker whitelist %s not found. All speakers default to Southern G2P.", fpath)
+        return set()
+    speakers = set()
+    with open(fpath, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                speakers.add(line)
+    log.info("Loaded %d verified Northern speakers for G2P dialect tagging.", len(speakers))
+    return speakers
+
+
+SPEAKER_DIALECTS_FILE = Path("data/speaker_dialects.json")
+_CLASSIFIER = None
+
+
+class DialectAuditor:
+    """Manages regional dialect tagging, cache loading/saving, and company speaker filtering."""
+    def __init__(self, data_root: Path, northern_speakers: set):
+        self.cache_file = data_root / "speaker_dialects.json"
+        self.northern_speakers = northern_speakers
+        self.dialects = self._load_cache()
+        self.votes = defaultdict(list)
+        self.processed_counts = defaultdict(int)
+        # Exponential indices to sample spread-out chapters/narrators
+        self.audit_indices = {0, 9, 29, 69, 149}
+
+    def _load_cache(self) -> dict:
+        if self.cache_file.exists():
+            try:
+                with open(self.cache_file, encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                log.warning("Failed to load speaker dialects file: %s", e)
+        return {}
+
+    def save_cache(self):
+        try:
+            self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.cache_file, "w", encoding="utf-8") as f:
+                json.dump(self.dialects, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            log.warning("Failed to save speaker dialects: %s", e)
+
+    def get_dialect_or_skip(self, spk: str, audio: np.ndarray, sample_rate: int) -> Optional[str]:
+        """
+        Retrieves the dialect for a speaker.
+        Returns 'north', 'south', or 'central'.
+        Returns None if the speaker is flagged as a mixed-bag company speaker (should be skipped).
+        """
+        # 1. Check cache first
+        if spk in self.dialects:
+            cached_val = self.dialects[spk]
+            return None if cached_val == "mixed" else cached_val
+
+        # 2. Whitelisted Northern speakers bypass classification
+        if spk in self.northern_speakers:
+            return "north"
+
+        # 3. Dynamic Exponential Auditing
+        idx = self.processed_counts[spk]
+        self.processed_counts[spk] += 1
+
+        if idx in self.audit_indices:
+            predicted = classify_audio_dialect(audio, sample_rate)
+            self.votes[spk].append(predicted)
+            dialect = predicted
+
+            # Audit and lock when we hit 5 spread-out samples (at index 149)
+            if len(self.votes[spk]) >= 5:
+                votes = self.votes[spk]
+                unique_labels = set(votes)
+                if len(unique_labels) == 1:
+                    self.dialects[spk] = list(unique_labels)[0]
+                    self.save_cache()
+                    log.info("Locked speaker '%s' as consistent '%s' accent (5/5 spread votes agreement).", spk, self.dialects[spk])
+                else:
+                    self.dialects[spk] = "mixed"
+                    self.save_cache()
+                    log.warning("Detected Mixed-Bag Company Speaker for '%s' (votes: %s). Dropping speaker to prevent training noise.", spk, votes)
+                
+                # Clear votes for this speaker
+                del self.votes[spk]
+        else:
+            # Reuse the last prediction to avoid redundant Wav2Vec2 calls
+            dialect = self.votes[spk][-1] if self.votes[spk] else "north"
+
+        return dialect
+
+    def finalize_sweep(self):
+        """Final sweep audit for remaining active speakers with pending votes."""
+        swept_any = False
+        for spk, votes in list(self.votes.items()):
+            if votes:
+                unique_labels = set(votes)
+                if len(votes) >= 2 and len(unique_labels) > 1:
+                    self.dialects[spk] = "mixed"
+                    log.warning("Final Sweep: Flagged mixed-bag speaker '%s' (votes: %s).", spk, votes)
+                else:
+                    self.dialects[spk] = votes[-1]
+                    log.info("Final Sweep: Locked speaker '%s' as consistent '%s' (votes: %s).", spk, self.dialects[spk], votes)
+                swept_any = True
+        
+        if swept_any:
+            self.save_cache()
+
+
+from collections import defaultdict
+
+
+def classify_audio_dialect(audio_array: np.ndarray, sample_rate: int) -> str:
+    """Dynamically classify the speech regional accent on the fly using a Wav2Vec2 classifier."""
+    global _CLASSIFIER
+    if _CLASSIFIER is None:
+        log.info("Initializing Hugging Face Wav2Vec2 regional dialect classifier (thangquang09)...")
+        # Auto-detect CUDA if available
+        device = 0 if torch.cuda.is_available() else -1
+        _CLASSIFIER = pipeline(
+            "audio-classification",
+            model="thangquang09/wav2vec2-base-vi-accent-classification",
+            device=device
+        )
+
+    try:
+        # Resample to 16kHz for Wav2Vec2 model if needed
+        if sample_rate != 16000:
+            audio_16k = librosa.resample(audio_array.astype(np.float32), orig_sr=sample_rate, target_sr=16000)
+        else:
+            audio_16k = audio_array.astype(np.float32)
+
+        res = _CLASSIFIER(audio_16k)
+        best_label = res[0]["label"]
+        mapping = {"Bắc": "north", "Nam": "south", "Trung": "central"}
+        pred = mapping.get(best_label, "north")
+        return pred
+    except Exception as e:
+        log.warning("Dialect model prediction failed, falling back to 'north': %s", e)
+        return "north"
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +340,10 @@ def main():
     processed_dir.mkdir(parents=True, exist_ok=True)
 
     verified_speakers = load_verified_speakers()
+    northern_speakers = load_northern_speakers(data_root)
+
+    # Initialize the modular Dialect Auditor
+    auditor = DialectAuditor(data_root, northern_speakers)
 
     log.info("Streaming dataset 'thivux/phoaudiobook'…")
     ds = load_dataset("thivux/phoaudiobook", split="train", streaming=True)
@@ -211,7 +353,7 @@ def main():
     records      = []
     global_idx   = 0
     rejected     = {"speaker": 0, "dialect": 0, "audio_decode": 0,
-                    "audio_quality": 0, "g2p": 0, "silent": 0}
+                    "audio_quality": 0, "g2p": 0, "silent": 0, "company_speaker": 0}
     retained_idx = 0
 
     for item in ds_meta:
@@ -252,8 +394,13 @@ def main():
             rejected["audio_quality"] += 1
             continue
 
-        # ── 5. G2P conversion ──────────────────────────────────────────────
-        ipa = to_ipa(transcript)
+        # ── 5. Dynamic Sentence-Level Dialect G2P Tagging with Company Speaker Filtering ──
+        dialect = auditor.get_dialect_or_skip(spk, processed, TARGET_SR)
+        if dialect is None:
+            rejected["company_speaker"] += 1
+            continue
+
+        ipa = to_ipa(transcript, dialect=dialect)
         if not ipa:
             rejected["g2p"] += 1
             continue
@@ -278,6 +425,9 @@ def main():
         if max_samples and retained_idx >= max_samples:
             log.info("Reached max-samples cap (%d). Stopping.", max_samples)
             break
+
+    # ── Final Sweep Audit for remaining active speakers ───────────────────
+    auditor.finalize_sweep()
 
     # ── Split and write train/val manifests ──────────────────────────────────
     import random
