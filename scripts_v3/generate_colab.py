@@ -264,8 +264,8 @@ def main():
         "        ]))",
         "",
         "# 3. Execute surgical embedding surgery",
-        "!python3 scripts_v3/extend_vocab.py --project-dir kokoro_vietnamese",
-        "",
+        "import subprocess",
+        "subprocess.run(['python3', 'scripts_v3/extend_vocab.py', '--project-dir', 'kokoro_vietnamese'], check=True)",
         "print('Vocabulary surgery completed successfully!')"
     ]))
 
