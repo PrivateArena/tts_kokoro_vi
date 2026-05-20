@@ -271,13 +271,18 @@ def main():
     ]))
     notebook["cells"].append(create_code_cell([
         "# 1. Clone StyleTTS2",
-        "if not os.path.exists('/opt/StyleTTS2'):",
+        "if not os.path.exists('/content/StyleTTS2'):",
         "    print('Cloning StyleTTS2 repository ...')",
-        "    !git clone --depth 1 https://github.com/yl4579/StyleTTS2.git /opt/StyleTTS2",
+        "    !git clone --depth 1 https://github.com/yl4579/StyleTTS2.git /content/StyleTTS2",
         "",
-        "# 2. Compile monotonic_align in-place",
+        "# 2. Create symlink at /opt/StyleTTS2 for run_train.py compatibility",
+        "if not os.path.exists('/opt/StyleTTS2'):",
+        "    !ln -s /content/StyleTTS2 /opt/StyleTTS2",
+        "    print('Created symlink /opt/StyleTTS2 -> /content/StyleTTS2')",
+        "",
+        "# 3. Compile monotonic_align in-place",
         "print('Compiling monotonic_align Cython extensions ...')",
-        "!cd /opt/StyleTTS2/monotonic_align && python3 setup.py build_ext --inplace",
+        "!cd /content/StyleTTS2/monotonic_align && python3 setup.py build_ext --inplace",
         "print('Compilation complete!')"
     ]))
 
