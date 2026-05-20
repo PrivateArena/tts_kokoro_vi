@@ -278,7 +278,7 @@ def main():
         "# 2. Clone StyleTTS2 if missing",
         "if not os.path.exists('/content/StyleTTS2'):",
         "    print('Cloning StyleTTS2 repository ...')",
-        "    !git clone --depth 1 https://github.com/yl4579/StyleTTS2.git /content/StyleTTS2",
+        "    !git clone --depth 1 --recursive https://github.com/yl4579/StyleTTS2.git /content/StyleTTS2",
         "",
         "# 3. Create symlink at /opt/StyleTTS2 for run_train.py compatibility",
         "# Remove any legacy real directory to prevent collision",
