@@ -28,6 +28,7 @@ def generate_yaml_config(
     epochs: int,
     save_freq: int,
     log_interval: int,
+    project_dir: Path,
 ):
     """Generate StyleTTS2-lite compatible YAML config from config_vi.json."""
     if not config_json_path.exists():
@@ -52,14 +53,14 @@ def generate_yaml_config(
 
     # ── Construct Config Dictionary ──────────────────────────────────────────
     config_yaml = {
-        "log_dir": "/workspace/checkpoints/Finetune",
+        "log_dir": str(project_dir / "checkpoints" / "Finetune"),
         "save_freq": save_freq,
         "log_interval": log_interval,
         "device": "cuda",
         "epochs": epochs,
         "batch_size": batch_size,
         "max_len": 500,
-        "pretrained_model": "/workspace/checkpoints/kokoro-vi-north-extended.pth",
+        "pretrained_model": str(project_dir / "checkpoints" / "kokoro-vi-north-extended.pth"),
         "second_stage_load_pretrained": True, # Required for Stage 2 fine-tuning
         "load_only_params": True,
         "debug": False,
@@ -71,9 +72,9 @@ def generate_yaml_config(
         "PLBERT_dir": "/opt/StyleTTS2/Utils/PLBERT/",
         
         "data_params": {
-            "train_data": "/workspace/data/train_list.txt",
-            "val_data": "/workspace/data/val_list.txt",
-            "root_path": "/workspace/",
+            "train_data": str(project_dir / "data" / "train_list.txt"),
+            "val_data": str(project_dir / "data" / "val_list.txt"),
+            "root_path": str(project_dir) + "/",
             "OOD_data": "/opt/StyleTTS2/Data/OOD_texts.txt", # Container OOD path
             "min_length": 50
         },
@@ -196,6 +197,7 @@ def generate_yaml_config(
 
 def main():
     parser = argparse.ArgumentParser(description="V3 Training Controller for StyleTTS2 Vietnamese.")
+    parser.add_argument("--project-dir", default="/workspace")
     parser.add_argument("--manifest", default="/workspace/data/train_manifest.csv")
     parser.add_argument("--val-manifest", default="/workspace/data/val_manifest.csv")
     parser.add_argument("--checkpoint", default="/workspace/checkpoints/kokoro-vi-north-extended.pth")
@@ -213,9 +215,16 @@ def main():
 
     log.info("Starting V3 Training Controller...")
 
-    # Set up config directories
-    config_vi_json = Path(args.config)
-    output_yaml = Path("/workspace/Configs/config_vi.yaml")
+    project_dir = Path(args.project_dir).resolve()
+    
+    # Resolve paths relative to project-dir if they are default /workspace paths
+    def resolve_p(val, rel_suffix):
+        if val.startswith("/workspace"):
+            return project_dir / rel_suffix
+        return Path(val)
+
+    config_vi_json = resolve_p(args.config, "config_vi.json")
+    output_yaml = project_dir / "Configs" / "config_vi.yaml"
 
     # Generate the Yaml config
     generate_yaml_config(
@@ -224,7 +233,8 @@ def main():
         batch_size=batch_size,
         epochs=epochs,
         save_freq=args.save_every,
-        log_interval=args.log_every
+        log_interval=args.log_every,
+        project_dir=project_dir,
     )
 
     # ── Verify and Launch official train.py ──────────────────────────────────
