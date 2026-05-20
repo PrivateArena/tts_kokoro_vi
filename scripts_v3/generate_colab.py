@@ -270,12 +270,17 @@ def main():
         "Fine-tuning requires StyleTTS2's core architecture and their Cython `monotonic_align` timeline library. We clone StyleTTS2 to `/opt/StyleTTS2` and compile the Cython code in-place."
     ]))
     notebook["cells"].append(create_code_cell([
-        "# 1. Clone StyleTTS2",
+        "# 1. Clean up legacy or incomplete StyleTTS2 folders",
+        "if os.path.exists('/content/StyleTTS2') and not os.path.exists('/content/StyleTTS2/train_finetune.py'):",
+        "    print('Cleaning up incomplete StyleTTS2 clone ...')",
+        "    !rm -rf /content/StyleTTS2",
+        "",
+        "# 2. Clone StyleTTS2 if missing",
         "if not os.path.exists('/content/StyleTTS2'):",
         "    print('Cloning StyleTTS2 repository ...')",
         "    !git clone --depth 1 https://github.com/yl4579/StyleTTS2.git /content/StyleTTS2",
         "",
-        "# 2. Create symlink at /opt/StyleTTS2 for run_train.py compatibility",
+        "# 3. Create symlink at /opt/StyleTTS2 for run_train.py compatibility",
         "# Remove any legacy real directory to prevent collision",
         "if os.path.exists('/opt/StyleTTS2') and not os.path.islink('/opt/StyleTTS2'):",
         "    print('Cleaning up legacy real /opt/StyleTTS2 directory to prevent collision ...')",
@@ -284,7 +289,7 @@ def main():
         "    !ln -s /content/StyleTTS2 /opt/StyleTTS2",
         "    print('Created symlink /opt/StyleTTS2 -> /content/StyleTTS2')",
         "",
-        "# 3. Compile monotonic_align in-place",
+        "# 4. Compile monotonic_align in-place",
         "print('Compiling monotonic_align Cython extensions ...')",
         "!cd /content/StyleTTS2/monotonic_align && python3 setup.py build_ext --inplace",
         "print('Compilation complete!')"
