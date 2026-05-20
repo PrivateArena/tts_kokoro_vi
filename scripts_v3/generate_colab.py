@@ -355,7 +355,15 @@ def main():
         "]",
         "cmd.extend(train_flag.split())",
         "print('Launching command:', ' '.join(cmd))",
-        "subprocess.run(cmd, check=True)"
+        "try:",
+        "    result = subprocess.run(cmd, capture_output=True, text=True, check=True)",
+        "    print(result.stdout)",
+        "except subprocess.CalledProcessError as e:",
+        "    print('--- STDOUT ---')",
+        "    print(e.stdout)",
+        "    print('--- STDERR ---')",
+        "    print(e.stderr)",
+        "    raise e"
     ]))
 
     # Write notebook file
