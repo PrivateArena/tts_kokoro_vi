@@ -642,13 +642,13 @@ def main():
         with open(path, "w", newline="", encoding="utf-8") as f:
             csv.writer(f, delimiter="|").writerows(recs)
 
-    # 2. Save 2-column Format manifests (wav_path|ipa) matching FilePathDataset
-    # Note: entries are stripped of unused columns to prevent unpack TypeError crashes!
+    # 2. Save 3-column Format manifests (wav_path|ipa|speaker_id) matching FilePathDataset
+    # Note: entries are written with exactly 3 columns (including speaker_id) to prevent pandas sampling empty DataFrame crashes!
     for path, recs in [(train_list_path, train_records), (val_list_path, val_records)]:
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f, delimiter="|")
             for rec in recs:
-                writer.writerow([rec[0], rec[1]])
+                writer.writerow([rec[0], rec[1], str(rec[3])])
 
     log.info(
         "Done. Train: %d samples | Val: %d samples\n"

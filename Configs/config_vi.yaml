@@ -1,0 +1,126 @@
+ASR_config: /opt/StyleTTS2/Utils/ASR/config.yml
+ASR_path: /opt/StyleTTS2/Utils/ASR/epoch_00080.pth
+F0_path: /opt/StyleTTS2/Utils/JDC/bst.t7
+PLBERT_dir: /opt/StyleTTS2/Utils/PLBERT/
+batch_size: 2
+data_params:
+  OOD_data: /opt/StyleTTS2/Data/OOD_texts.txt
+  min_length: 50
+  root_path: /media/jang/home/Deve/tts_kokoro_vi/
+  train_data: /media/jang/home/Deve/tts_kokoro_vi/data/train_list.txt
+  val_data: /media/jang/home/Deve/tts_kokoro_vi/data/val_list.txt
+debug: false
+device: cuda
+epochs: 1
+load_only_params: true
+log_dir: /media/jang/home/Deve/tts_kokoro_vi/checkpoints/Finetune
+log_interval: 10
+loss_params:
+  diff_epoch: 10
+  joint_epoch: 30
+  lambda_F0: 1.0
+  lambda_ce: 20.0
+  lambda_diff: 1.0
+  lambda_dur: 1.0
+  lambda_gen: 1.0
+  lambda_mel: 5.0
+  lambda_mono: 1.0
+  lambda_norm: 1.0
+  lambda_s2s: 1.0
+  lambda_slm: 1.0
+  lambda_sty: 1.0
+max_len: 500
+model_params:
+  ASR_params:
+    hidden_dim: 256
+    input_dim: 80
+    n_layers: 6
+    token_embedding_dim: 512
+  JDC_params:
+    num_class: 1
+    seq_len: 192
+  decoder:
+    gen_istft_hop_size: 5
+    gen_istft_n_fft: 20
+    resblock_dilation_sizes:
+    - - 1
+      - 3
+      - 5
+    - - 1
+      - 3
+      - 5
+    - - 1
+      - 3
+      - 5
+    resblock_kernel_sizes:
+    - 3
+    - 7
+    - 11
+    type: istftnet
+    upsample_initial_channel: 512
+    upsample_kernel_sizes:
+    - 20
+    - 12
+    upsample_rates:
+    - 10
+    - 6
+  diffusion:
+    dist:
+      estimate_sigma_data: true
+      mean: -3.0
+      sigma_data: 0.2
+      std: 1.0
+    embedding_mask_proba: 0.1
+    transformer:
+      head_features: 64
+      multiplier: 2
+      num_heads: 8
+      num_layers: 3
+  dim_in: 64
+  dropout: 0.2
+  hidden_dim: 512
+  max_conv_dim: 512
+  max_dur: 50
+  multispeaker: true
+  n_layer: 3
+  n_mels: 80
+  n_token: 171
+  slm:
+    hidden: 768
+    initial_channel: 64
+    model: microsoft/wavlm-base-plus
+    nlayers: 13
+    sr: 16000
+  style_dim: 128
+optimizer_params:
+  bert_lr: 1.0e-05
+  ft_lr: 0.0001
+  lr: 0.0001
+preprocess_params:
+  spect_params:
+    hop_length: 300
+    n_fft: 2048
+    win_length: 1200
+  sr: 24000
+pretrained_model: /media/jang/home/Deve/tts_kokoro_vi/checkpoints/kokoro-vi-north-extended.pth
+save_freq: 1
+second_stage_load_pretrained: true
+slmadv_params:
+  batch_percentage: 0.5
+  iter: 10
+  max_len: 500
+  min_len: 400
+  scale: 0.01
+  sig: 1.5
+  thresh: 5
+symbol:
+  extend: :,.!?/—…"()“” ̃ʣʥʦʨᵝㄓAIㄅOㄆQRSTㄇㄈWㄉYᵊabcdefㄊhijklmnopqrstuvwxyzɑɐɒæㄋㄌβɔɕçㄍɖðʤəㄎㄦɛɜㄏㄐɟㄑɡㄒㄔㄕㄗㄘㄙ月ㄚɨɪʝㄛㄝㄞㄟㄠㄡɯɰŋɳɲɴøㄢɸθœㄣㄤɹㄥɾㄖㄧʁɽʂʃʈʧㄨʊʋㄩʌɣㄜㄭχʎ十压言ʒʔ阳要阴应用又中ˈˌː穵外万ʰ王ʲ为文瓮我35124元云ᵻ
+  letters: ''
+  letters_ipa: ''
+  pad: ;
+  punctuation: ''
+training_strats:
+  freeze_modules:
+  - ''
+  ignore_modules:
+  - ''

@@ -241,13 +241,21 @@ def main():
 
     # ── Verify and Launch official train.py ──────────────────────────────────
     official_train_py = Path("/opt/StyleTTS2/train_finetune.py")
+    cwd_dir = "/opt/StyleTTS2"
     if not official_train_py.exists():
-        log.error("Official StyleTTS2 train_finetune.py not found at /opt/StyleTTS2/train_finetune.py!")
-        sys.exit(1)
+        # Fallback to local workspace StyleTTS2 copy
+        local_candidate = project_dir / "tmp" / "StyleTTS2" / "train_finetune.py"
+        if local_candidate.exists():
+            official_train_py = local_candidate
+            cwd_dir = str(project_dir / "tmp" / "StyleTTS2")
+            log.info("StyleTTS2 fallback found in workspace at %s", official_train_py)
+        else:
+            log.error("Official StyleTTS2 train_finetune.py not found at /opt/StyleTTS2/train_finetune.py or workspace fallback!")
+            sys.exit(1)
 
-    log.info("Launching official StyleTTS2 training script inside Docker environment...")
+    log.info("Launching official StyleTTS2 training script...")
     cmd = [
-        "python3",
+        sys.executable,
         str(official_train_py),
         "--config_path",
         str(output_yaml)
@@ -255,7 +263,7 @@ def main():
     
     # Run the official training script from its repository directory to resolve imports and asset paths smoothly
     try:
-        subprocess.run(cmd, check=True, cwd="/opt/StyleTTS2")
+        subprocess.run(cmd, check=True, cwd=cwd_dir)
     except subprocess.CalledProcessError as e:
         log.error("Training script failed with exit status %d", e.returncode)
         sys.exit(e.returncode)
