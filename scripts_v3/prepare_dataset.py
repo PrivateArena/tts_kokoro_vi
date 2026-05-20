@@ -411,7 +411,7 @@ def validate_tone_coverage(manifest_path: Path) -> None:
 
 def parse_args():
     p = argparse.ArgumentParser(description="Prepare Vietnamese TTS dataset (V3).")
-    p.add_argument("--data-root", default="data")
+    p.add_argument("--data-root", default=os.getenv("DATA_ROOT", "data"))
     p.add_argument("--max-samples", type=int, default=0)
     p.add_argument("--smoke-test", action="store_true")
     p.add_argument("--bypass-speaker-filter", action="store_true")
@@ -483,120 +483,124 @@ def main():
         except Exception as e:
             log.warning("Could not load processed records cache: %s", e)
 
-    log.info("Streaming dataset 'thivux/phoaudiobook' (split=train)...")
-    ds = load_dataset("thivux/phoaudiobook", split="train", streaming=True)
-    ds_meta = ds.cast_column("audio", hf_datasets.Audio(decode=False))
-
     records = []
     rejected = defaultdict(int)
     global_idx = 0
     retained_idx = 0
 
+    # ── Restore processed records from progress cache ────────────────────────
+    if cache:
+        log.info("Checking progress cache for existing valid audio files ...")
+        for key, val in cache.items():
+            full_path = data_root.parent / val["rel_fpath"]
+            if full_path.exists():
+                spk_id = get_speaker_id(val["spk"])
+                records.append((val["rel_fpath"], val["ipa"], val["transcript"], spk_id))
+        retained_idx = len(records)
+        log.info("Successfully restored %d valid records from cache.", retained_idx)
+
     import hashlib
     try:
-        for item in ds_meta:
-            global_idx += 1
+        if max_samples > 0 and retained_idx >= max_samples:
+            log.info("Bypassing dataset streaming: already restored %d samples (cap=%d) from cache.", retained_idx, max_samples)
+        else:
+            log.info("Streaming dataset 'thivux/phoaudiobook' (split=train)...")
+            ds = load_dataset("thivux/phoaudiobook", split="train", streaming=True)
+            ds_meta = ds.cast_column("audio", hf_datasets.Audio(decode=False))
 
-            # 1. Speaker Filter
-            spk = (item.get("speaker") or "").strip()
-            if not spk:
-                rejected["no_speaker"] += 1
-                continue
-            if verified_speakers is not None and spk not in verified_speakers:
-                rejected["speaker_whitelist"] += 1
-                continue
+            for item in ds_meta:
+                global_idx += 1
 
-            # 2. Text Dialect lexical filter
-            transcript = (item.get("text") or "").strip()
-            if not transcript:
-                rejected["empty_text"] += 1
-                continue
-            if not passes_dialect_filter(transcript):
-                rejected["dialect_text"] += 1
-                continue
-
-            # Compute stable deterministic hash for this item
-            item_hash = hashlib.md5(f"{spk}_{transcript}".encode("utf-8")).hexdigest()
-
-            # Cache hit: instant skip
-            if item_hash in cache:
-                rel_fpath = cache[item_hash]["rel_fpath"]
-                full_fpath = data_root.parent / rel_fpath
-                if full_fpath.exists():
-                    ipa = cache[item_hash]["ipa"]
-                    spk_id = get_speaker_id(spk)
-                    records.append((rel_fpath, ipa, transcript, spk_id))
-                    retained_idx += 1
-
-                    if retained_idx % 200 == 0:
-                        log.info("Scanned %d | Retained %d (from cache) | Rejected: %s", global_idx, retained_idx, dict(rejected))
-
-                    if max_samples and retained_idx >= max_samples:
-                        log.info("Reached max-samples cap (%d). Stopping.", max_samples)
-                        break
+                # 1. Speaker Filter
+                spk = (item.get("speaker") or "").strip()
+                if not spk:
+                    rejected["no_speaker"] += 1
+                    continue
+                if verified_speakers is not None and spk not in verified_speakers:
+                    rejected["speaker_whitelist"] += 1
                     continue
 
-            # 3. Audio bytes check
-            audio_data = item.get("audio") or {}
-            audio_bytes = audio_data.get("bytes")
-            if not audio_bytes:
-                rejected["audio_missing"] += 1
-                continue
-                
-            try:
-                with io.BytesIO(audio_bytes) as bio:
-                    array, orig_sr = sf.read(bio, dtype="float32")
-            except Exception as e:
-                rejected["audio_decode"] += 1
-                continue
+                # 2. Text Dialect lexical filter
+                transcript = (item.get("text") or "").strip()
+                if not transcript:
+                    rejected["empty_text"] += 1
+                    continue
+                if not passes_dialect_filter(transcript):
+                    rejected["dialect_text"] += 1
+                    continue
 
-            # 4. Audio Quality Pipeline (LUFS + Post-normalization clipping check + DNSMOS)
-            processed = process_audio(array, orig_sr, data_root)
-            if processed is None:
-                rejected["audio_quality"] += 1
-                continue
+                # Compute stable deterministic hash for this item
+                item_hash = hashlib.md5(f"{spk}_{transcript}".encode("utf-8")).hexdigest()
 
-            # 5. Dialect audit & G2P dialect-dependent phonemization
-            audio_float = processed.astype(np.float32) / 32767.0
-            dialect = auditor.get_dialect_or_skip(spk, audio_float, TARGET_SR)
-            if dialect is None:
-                rejected["dialect_mismatch_or_mixed"] += 1
-                continue
+                # Cache hit: instant skip
+                if item_hash in cache:
+                    rel_fpath = cache[item_hash]["rel_fpath"]
+                    full_fpath = data_root.parent / rel_fpath
+                    if full_fpath.exists():
+                        # Already added during cache restoration, do not duplicate!
+                        continue
 
-            ipa = to_ipa(transcript, dialect=dialect)
-            if not ipa:
-                rejected["g2p_failed"] += 1
-                continue
+                # 3. Audio bytes check
+                audio_data = item.get("audio") or {}
+                audio_bytes = audio_data.get("bytes")
+                if not audio_bytes:
+                    rejected["audio_missing"] += 1
+                    continue
+                    
+                try:
+                    with io.BytesIO(audio_bytes) as bio:
+                        array, orig_sr = sf.read(bio, dtype="float32")
+                except Exception as e:
+                    rejected["audio_decode"] += 1
+                    continue
 
-            # 6. Save clip
-            spk_id = get_speaker_id(spk)
-            safe_spk = re.sub(r"[^\w]", "_", spk)[:32]
-            fname = f"{safe_spk}_{retained_idx:07d}.wav"
-            fpath = processed_dir / fname
-            sf.write(str(fpath), processed, TARGET_SR, subtype="PCM_16")
+                # 4. Audio Quality Pipeline (LUFS + Post-normalization clipping check + DNSMOS)
+                processed = process_audio(array, orig_sr, data_root)
+                if processed is None:
+                    rejected["audio_quality"] += 1
+                    continue
 
-            # Keep relative path for training configuration compatibility
-            rel_fpath = os.path.relpath(fpath, data_root.parent)
-            records.append((rel_fpath, ipa, transcript, spk_id))
-            retained_idx += 1
+                # 5. Dialect audit & G2P dialect-dependent phonemization
+                audio_float = processed.astype(np.float32) / 32767.0
+                dialect = auditor.get_dialect_or_skip(spk, audio_float, TARGET_SR)
+                if dialect is None:
+                    rejected["dialect_mismatch_or_mixed"] += 1
+                    continue
 
-            # Update Progress Cache Dict
-            cache[item_hash] = {
-                "rel_fpath": rel_fpath,
-                "ipa": ipa,
-                "transcript": transcript,
-                "spk": spk
-            }
+                ipa = to_ipa(transcript, dialect=dialect)
+                if not ipa:
+                    rejected["g2p_failed"] += 1
+                    continue
 
-            if retained_idx % 200 == 0:
-                log.info("Scanned %d | Retained %d | Rejected: %s", global_idx, retained_idx, dict(rejected))
-                # Periodically flush cache to disk
-                with open(cache_path, "w", encoding="utf-8") as f:
-                    json.dump(cache, f, ensure_ascii=False, indent=2)
+                # 6. Save clip
+                spk_id = get_speaker_id(spk)
+                safe_spk = re.sub(r"[^\w]", "_", spk)[:32]
+                fname = f"{safe_spk}_{retained_idx:07d}.wav"
+                fpath = processed_dir / fname
+                sf.write(str(fpath), processed, TARGET_SR, subtype="PCM_16")
 
-            if max_samples and retained_idx >= max_samples:
-                log.info("Reached max-samples cap (%d). Stopping.", max_samples)
-                break
+                # Keep relative path for training configuration compatibility
+                rel_fpath = os.path.relpath(fpath, data_root.parent)
+                records.append((rel_fpath, ipa, transcript, spk_id))
+                retained_idx += 1
+
+                # Update Progress Cache Dict
+                cache[item_hash] = {
+                    "rel_fpath": rel_fpath,
+                    "ipa": ipa,
+                    "transcript": transcript,
+                    "spk": spk
+                }
+
+                if retained_idx % 200 == 0:
+                    log.info("Scanned %d | Retained %d | Rejected: %s", global_idx, retained_idx, dict(rejected))
+                    # Periodically flush cache to disk
+                    with open(cache_path, "w", encoding="utf-8") as f:
+                        json.dump(cache, f, ensure_ascii=False, indent=2)
+
+                if max_samples and retained_idx >= max_samples:
+                    log.info("Reached max-samples cap (%d). Stopping.", max_samples)
+                    break
     finally:
         # Guarantee saving progress cache upon any crash/exit
         if cache:
