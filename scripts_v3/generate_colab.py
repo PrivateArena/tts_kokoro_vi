@@ -271,7 +271,7 @@ def main():
     ]))
     notebook["cells"].append(create_code_cell([
         "# 1. Clean up legacy or incomplete StyleTTS2 folders",
-        "if os.path.exists('/content/StyleTTS2') and not os.path.exists('/content/StyleTTS2/train_finetune.py'):",
+        "if os.path.exists('/content/StyleTTS2') and (not os.path.exists('/content/StyleTTS2/train_finetune.py') or not os.path.exists('/content/StyleTTS2/monotonic_align')):",
         "    print('Cleaning up incomplete StyleTTS2 clone ...')",
         "    !rm -rf /content/StyleTTS2",
         "",
