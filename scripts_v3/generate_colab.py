@@ -150,7 +150,7 @@ def main():
         "# Test G2P & Normalization on import",
         "import vinorm",
         "import viphoneme",
-        "from prepare_dataset import to_ipa",
+        "from scripts_v3.prepare_dataset import to_ipa",
         "print('Normalization & Phonemizer test: [xin chào] ->', to_ipa('xin chào'))"
     ]))
 
