@@ -301,7 +301,26 @@ def main():
         "    !rm -rf /opt/StyleTTS2",
         "if not os.path.exists('/opt/StyleTTS2'):",
         "    !ln -s /content/StyleTTS2 /opt/StyleTTS2",
-        "    print('Created symlink /opt/StyleTTS2 -> /content/StyleTTS2')"
+        "    print('Created symlink /opt/StyleTTS2 -> /content/StyleTTS2')",
+        "",
+        "# 6. Programmatically patch StyleTTS2's train_finetune.py to disable weights_only for PyTorch 2.6+ compatibility",
+        "train_file = '/content/StyleTTS2/train_finetune.py'",
+        "if os.path.exists(train_file):",
+        "    with open(train_file, 'r', encoding='utf-8') as f:",
+        "        code = f.read()",
+        "    if 'weights_only=False' not in code and 'torch.load =' not in code:",
+        "        print('Patching train_finetune.py for PyTorch 2.6+ compatibility ...')",
+        "        patch = (",
+        "            'import torch\\n'",
+        "            'try:\\n'",
+        "            '    _orig_load = torch.load\\n'",
+        "            '    torch.load = lambda *args, **kwargs: _orig_load(*args, **{**kwargs, \\'weights_only\\': False})\\n'",
+        "            'except Exception:\\n'",
+        "            '    pass\\n\\n'",
+        "        )",
+        "        with open(train_file, 'w', encoding='utf-8') as f:",
+        "            f.write(patch + code)",
+        "        print('PyTorch 2.6+ compatibility patch applied successfully!')"
     ]))
 
     # 10. Step 9: Launch training cell
