@@ -233,6 +233,8 @@ def main():
         "Now that `train_manifest.csv` has been generated, we download the multilingual Chinese/English Kokoro baseline and run surgical embedding adaptations, expanding the model's text encoder to align perfectly with all Northern Vietnamese IPA symbols and tones found in the dataset."
     ]))
     notebook["cells"].append(create_code_cell([
+        "import os",
+        "",
         "# 1. Download base pth & config from HuggingFace",
         "os.makedirs('kokoro_vietnamese/checkpoints', exist_ok=True)",
         "if not os.path.exists('kokoro_vietnamese/checkpoints/kokoro-v1_1-zh.pth'):",
@@ -275,6 +277,9 @@ def main():
         "Fine-tuning requires StyleTTS2's core architecture and their Cython `monotonic_align` timeline library. We clone StyleTTS2 to `/opt/StyleTTS2` and compile the Cython code in-place."
     ]))
     notebook["cells"].append(create_code_cell([
+        "import os",
+        "import json",
+        "",
         "# 1. Clean up legacy or incomplete StyleTTS2 folders",
         "if os.path.exists('/content/StyleTTS2') and not os.path.exists('/content/StyleTTS2/train_finetune.py'):",
         "    print('Cleaning up incomplete StyleTTS2 clone ...')",

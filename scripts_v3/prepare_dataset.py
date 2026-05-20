@@ -23,9 +23,9 @@ def _mock_find_module(name):
     if spec is None:
         raise ImportError(f"No module named '{name}'")
     path = (
-        importlib.util.find_spec(name).__spec__.submodule_search_locations[0]
+        spec.submodule_search_locations[0]
         if spec.submodule_search_locations
-        else importlib.util.find_spec(name).origin
+        else spec.origin
     )
     return (None, path, None)
 
