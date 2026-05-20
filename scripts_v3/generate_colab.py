@@ -320,7 +320,22 @@ def main():
         "        )",
         "        with open(train_file, 'w', encoding='utf-8') as f:",
         "            f.write(patch + code)",
-        "        print('PyTorch 2.6+ compatibility patch applied successfully!')"
+        "        print('PyTorch 2.6+ compatibility patch applied successfully!')",
+        "",
+        "# 7. Programmatically patch StyleTTS2's models.py to fallback if 'net' key is missing (allowing loading of standard state_dicts)",
+        "models_file = '/content/StyleTTS2/models.py'",
+        "if os.path.exists(models_file):",
+        "    with open(models_file, 'r', encoding='utf-8') as f:",
+        "        code = f.read()",
+        "    if \"params = state.get('net', state)\" not in code:",
+        "        print(\"Patching models.py to support loading raw state_dicts...\")",
+        "        code = code.replace(\"params = state['net']\", \"params = state.get('net', state)\")",
+        "        code = code.replace(\"optimizer.load_state_dict(state['optimizer'])\", \"if 'optimizer' in state: optimizer.load_state_dict(state['optimizer'])\")",
+        "        code = code.replace(\"epoch = state['epoch']\", \"epoch = state.get('epoch', 0)\")",
+        "        code = code.replace(\"iters = state['iters']\", \"iters = state.get('iters', 0)\")",
+        "        with open(models_file, 'w', encoding='utf-8') as f:",
+        "            f.write(code)",
+        "        print('models.py standard state_dict fallback patch applied successfully!')"
     ]))
 
     # 10. Step 9: Launch training cell
