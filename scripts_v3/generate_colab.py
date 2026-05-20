@@ -335,8 +335,17 @@ def main():
         "",
         "# Execute",
         "import os",
+        "import subprocess",
         "os.environ['PYTHONPATH'] = '/opt/StyleTTS2:/opt/StyleTTS2/monotonic_align:' + os.environ.get('PYTHONPATH', '')",
-        "!python3 kokoro_vietnamese/scripts/run_train.py {train_flag} --save-every 1 --log-every 10 --project-dir kokoro_vietnamese"
+        "cmd = [",
+        "    'python3', 'kokoro_vietnamese/scripts/run_train.py',",
+        "    '--save-every', '1',",
+        "    '--log-every', '10',",
+        "    '--project-dir', 'kokoro_vietnamese'",
+        "]",
+        "cmd.extend(train_flag.split())",
+        "print('Launching command:', ' '.join(cmd))",
+        "subprocess.run(cmd, check=True)"
     ]))
 
     # Write notebook file
