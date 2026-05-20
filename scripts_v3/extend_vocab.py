@@ -290,11 +290,23 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     proj = Path(args.project_dir)
+    
+    def resolve_path(p_str: str) -> Path:
+        p = Path(p_str)
+        if p.is_absolute():
+            return p
+        try:
+            if p.parts and p.parts[0] == proj.name:
+                return p
+        except Exception:
+            pass
+        return proj / p
+
     perform_surgery(
-        checkpoint_path=proj / args.checkpoint,
-        config_path=proj / args.config,
-        manifest_path=proj / args.manifest,
-        output_checkpoint_path=proj / args.out_checkpoint,
-        output_config_path=proj / args.out_config,
-        vocab_diff_report_path=proj / "data/vocab_diff_report.json",
+        checkpoint_path=resolve_path(args.checkpoint),
+        config_path=resolve_path(args.config),
+        manifest_path=resolve_path(args.manifest),
+        output_checkpoint_path=resolve_path(args.out_checkpoint),
+        output_config_path=resolve_path(args.out_config),
+        vocab_diff_report_path=resolve_path("data/vocab_diff_report.json"),
     )
