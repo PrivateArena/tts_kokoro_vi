@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Google Colab Notebook Generator for Northern Vietnamese StyleTTS2 Pipeline.
+Generates a structured, cell-by-cell .ipynb file in the project root.
+"""
+
+import json
+import sys
+from pathlib import Path
+
+def create_markdown_cell(content_lines):
+    return {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [line + "\n" for line in content_lines]
+    }
+
+def create_code_cell(source_lines):
+    return {
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [line + "\n" for line in source_lines]
+    }
+
+def main():
+    notebook = {
+        "cells": [],
+        "metadata": {
+            "accelerator": "GPU",
+            "colab": {
+                "provenance": []
+            },
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3"
+            },
+            "language_info": {
+                "name": "python"
+            }
+        },
+        "nbformat": 4,
+        "nbformat_minor": 0
+    }
+
+    # 1. Title cell
+    notebook["cells"].append(create_markdown_cell([
+        "# 🇻🇳 Northern Vietnamese StyleTTS2 Fine-Tuning Factory (V3)",
+        "",
+        "Welcome to the industrial-grade, cloud-based fine-tuning orchestrator for Northern Vietnamese speech synthesis. This notebook pivots the StyleTTS2 training suite from the local development system to Google Colab, leveraging GPU-accelerated computing (T4, L4, or A100 instances) to execute large-scale, high-fidelity modeling.",
+        "",
+        "### Key Orchestration Highlights:",
+        "1. **Google Drive Integration**: Checkpoints, logs, and preprocessed audio caches are streamed directly to Google Drive, ensuring that your training progress is persistent and **100% resumable** across Colab session disconnections.",
+        "2. **Resilient Sidecar Progress Caching**: Preprocessing scans hashes. If interrupted, the dataset preparing cell skips processed files immediately, bypassing audio gating (DNSMOS, LUFS) and G2P.",
+        "3. **Zero-Hurdle Compatibility**: Auto-detects dependencies and dynamically patches `vinorm`'s deprecated `imp` import to prevent failures.",
+        "4. **Exact Mathematical Token-Alignment**: Automatically matches the model's text-encoder embedding layer to your dialect-expanded vocabulary size, preventing runtime dimension crashes."
+    ]))
+
+    # 2. Mount G-Drive cell
+    notebook["cells"].append(create_markdown_cell([
+        "## Step 1: Connect Google Drive",
+        "We mount Google Drive to persist all processed audio, training configs, checkpoints, and cached metadata securely."
+    ]))
+    notebook["cells"].append(create_code_cell([
+        "from google.colab import drive",
+        "drive.mount('/content/drive')",
+        "",
+        "# Define persistent directory in your Google Drive",
+        "import os",
+        "DRIVE_DIR = '/content/drive/MyDrive/tts_kokoro_vi'",
+        "os.makedirs(DRIVE_DIR, exist_ok=True)",
+        "print(f'Persistent workspace established at: {DRIVE_DIR}')"
+    ]))
+
+    # 3. Clone repository cell
+    notebook["cells"].append(create_markdown_cell([
+        "## Step 2: Clone the Private Workspace Repository",
+        "Since the repository `PrivateArena/tts_kokoro_vi` is private, we will clone it securely by prompting for your GitHub Personal Access Token (PAT)."
+    ]))
+    notebook["cells"].append(create_code_cell([
+        "import getpass",
+        "",
+        "pat = getpass.getpass('Please enter your GitHub Personal Access Token (PAT): ')",
+        "repo_url = f'https://{pat}@github.com/PrivateArena/tts_kokoro_vi.git'",
+        "",
+        "!git clone {repo_url} /content/tts_kokoro_vi",
+        "%cd /content/tts_kokoro_vi",
+        "",
+        "# Verify repository files are present",
+        "!ls -la"
+    ]))
+
+    # 4. Dependency cell
+    notebook["cells"].append(create_markdown_cell([
+        "## Step 3: Install System & Python Dependencies",
+        "We install standard Linux audio processors (`ffmpeg`, `sox`, `libsndfile1`) and install the exact Python library ecosystem.",
+        "Crucially, we **programmatically patch `vinorm`** on-the-fly to replace the deprecated standard library `imp` module, ensuring compatibility regardless of Colab's active Python version."
+    ]))
+    notebook["cells"].append(create_code_cell([
+        "# 1. Install system audio tools",
+        "!apt-get update -qq && apt-get install -y -qq ffmpeg sox libsndfile1 build-essential espeak-ng",
+        "",
+        "# 2. Install Python core libraries and custom NLP packages",
+        "!pip install --no-cache-dir \\",
+        "    datasets \\",
+        "    soundfile \\",
+        "    librosa \\",
+        "    pyloudnorm \\",
+        "    vinorm \\",
+        "    underthesea \\",
+        "    viphoneme \\",
+        "    phonemizer \\",
+        "    grapheme \\",
+        "    regex \\",
+        "    eng-to-ipa \\",
+        "    transformers>=4.40.0 \\",
+        "    accelerate \\",
+        "    tqdm \\",
+        "    wandb \\",
+        "    PyYAML \\",
+        "    onnxruntime \\",
+        "    scipy \\",
+        "    matplotlib \\",
+        "    munch",
+        "",
+        "# 3. Programmatic vinorm/viphoneme compatibility patch",
+        "import os",
+        "import vinorm",
+        "init_file = os.path.join(os.path.dirname(vinorm.__file__), '__init__.py')",
+        "with open(init_file, 'r', encoding='utf-8') as f:",
+        "    content = f.read()",
+        "if 'import imp' in content:",
+        "    print('Patching vinorm for Python 3.12+ (imp module removal) compatibility ...')",
+        "    content = content.replace('import imp', '')",
+        "    content = content.replace(\"A=imp.find_module('vinorm')[1]\", \"A=os.path.dirname(os.path.abspath(__file__))\")",
+        "    with open(init_file, 'w', encoding='utf-8') as f:",
+        "        f.write(content)",
+        "    print('Patch applied successfully!')",
+        "else:",
+        "    print('vinorm is already compatible. Skipping patch.')",
+        "",
+        "# Test G2P & Normalization on import",
+        "import viphoneme",
+        "from prepare_dataset import to_ipa",
+        "print('Normalization & Phonemizer test: [xin chào] ->', to_ipa('xin chào'))"
+    ]))
+
+    # 5. Hugging Face Login cell
+    notebook["cells"].append(create_markdown_cell([
+        "## Step 4: Hugging Face Authentication",
+        "The PhoAudioBook dataset is gated. Run this cell to authenticate with Hugging Face so the streaming preprocessor can fetch the repository."
+    ]))
+    notebook["cells"].append(create_code_cell([
+        "from huggingface_hub import notebook_login",
+        "notebook_login()"
+    ]))
+
+    # 6. Download Microsoft DNSMOS ONNX cell
+    notebook["cells"].append(create_markdown_cell([
+        "## Step 5: High-Quality Audio Filter (DNSMOS ONNX Model)",
+        "For maximum perceptual speech synthesis quality, we download the official Microsoft DNSMOS ONNX model. If not present, the preprocessing pipeline will fallback to a coarser RMS-proxy SNR, which is less ideal."
+    ]))
+    notebook["cells"].append(create_code_cell([
+        "import urllib.request",
+        "os.makedirs('kokoro_vietnamese/models', exist_ok=True)",
+        "dnsmos_path = 'kokoro_vietnamese/models/dnsmos_p835.onnx'",
+        "if not os.path.exists(dnsmos_path):",
+        "    print('Downloading Microsoft DNSMOS ONNX model ...')",
+        "    url = 'https://github.com/microsoft/DNS-Challenge/raw/master/DNSMOS/DNSMOS/sig_bak_ovr.onnx'",
+        "    # Using backup location or direct mirror if needed, or downloading custom model",
+        "    # For simplicity, we download standard p835 reference model",
+        "    try:",
+        "        urllib.request.urlretrieve('https://github.com/microsoft/DNS-Challenge/raw/master/DNSMOS/sig_bak_ovr.onnx', dnsmos_path)",
+        "        print('DNSMOS model placed at:', dnsmos_path)",
+        "    except Exception as e:",
+        "        print('Direct github download failed. Preprocessor will fall back to SNR filtering safely.')",
+        "else:",
+        "    print('DNSMOS model already exists.')"
+    ]))
+
+    # 7. Step 6: Vocabulary Surgery cell
+    notebook["cells"].append(create_markdown_cell([
+        "## Step 6: Vocabulary Surgery & Base Checkpoint Fetching",
+        "We download the multilingual Chinese/English Kokoro baseline and run surgical embedding adaptations, expanding the model's text encoder to align perfectly with all Northern Vietnamese IPA symbols and tones."
+    ]))
+    notebook["cells"].append(create_code_cell([
+        "# 1. Download base pth & config from HuggingFace",
+        "os.makedirs('kokoro_vietnamese/checkpoints', exist_ok=True)",
+        "if not os.path.exists('kokoro_vietnamese/checkpoints/kokoro-v1_1-zh.pth'):",
+        "    !curl -L -o kokoro_vietnamese/checkpoints/kokoro-v1_1-zh.pth https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh/resolve/main/kokoro-v1_1-zh.pth",
+        "if not os.path.exists('kokoro_vietnamese/config.json'):",
+        "    !curl -L -o kokoro_vietnamese/config.json https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh/resolve/main/config.json",
+        "",
+        "# 2. Extract unique speakers list if not already present",
+        "if not os.path.exists('kokoro_vietnamese/data/unique_speakers.txt'):",
+        "    print('Extracting speaker metadata ...')",
+        "    !python3 scripts_v3/get_unique_speakers.py",
+        "",
+        "# Setup Northern Vietnamese speakers template if missing",
+        "verified_file = 'kokoro_vietnamese/data/verified_northern_speakers.txt'",
+        "if not os.path.exists(verified_file):",
+        "    with open(verified_file, 'w', encoding='utf-8') as f:",
+        "        f.write('\\n'.join([",
+        "            '# Verified Northern Vietnamese Speakers Whitelist',",
+        "            'Nguyễn_Văn_Khỏa',",
+        "            'Lê_Đức_Quân',",
+        "            'Diễm_Hân',",
+        "            'Mai_Anh',",
+        "            'Đông_Quân',",
+        "            'Thoan_Đây',",
+        "            'Ngọc_Diễm',",
+        "            'Thanh_Thủy',",
+        "            'Vy_Vy',",
+        "            'Tuấn_Anh'",
+        "        ]))",
+        "",
+        "# 3. Execute surgical embedding surgery",
+        "!python3 scripts_v3/extend_vocab.py \\",
+        "    --project-dir kokoro_vietnamese \\",
+        "    --checkpoint kokoro_vietnamese/checkpoints/kokoro-v1_1-zh.pth \\",
+        "    --config kokoro_vietnamese/config.json \\",
+        "    --manifest kokoro_vietnamese/data/train_manifest.csv \\",
+        "    --out-checkpoint kokoro_vietnamese/checkpoints/kokoro-vi-north-extended.pth \\",
+        "    --out-config kokoro_vietnamese/config_vi.json",
+        "",
+        "print('Vocabulary surgery completed successfully!')"
+    ]))
+
+    # 8. Step 7: Preprocessing cell
+    notebook["cells"].append(create_markdown_cell([
+        "## Step 7: Stream & Filter the Dataset (PhoAudioBook)",
+        "We execute the optimized dataset preprocessing pipeline (`prepare_dataset.py`).",
+        "",
+        "### Drive Integration Mechanism:",
+        "To protect your progress, we **symlink your Google Drive workspace** to `kokoro_vietnamese/data`. All downloaded parquets, output WAV files, train/val lists, and `processed_records.json` progress markers will be written directly to your Drive.",
+        "If Colab crashes or the runtime disconnects, simply re-run Step 1 and Step 7. The preprocessor will **instantly resume** exactly where it left off, avoiding redundant downloads and processing time!"
+    ]))
+    notebook["cells"].append(create_code_cell([
+        "# 1. Symlink Colab data directory to Google Drive for persistent checkpoints",
+        "import os",
+        "from pathlib import Path",
+        "",
+        "local_data_path = Path('/content/tts_kokoro_vi/kokoro_vietnamese/data')",
+        "drive_data_path = Path(DRIVE_DIR) / 'data'",
+        "os.makedirs(drive_data_path, exist_ok=True)",
+        "",
+        "# Backup existing local template verified northern speakers list if exists",
+        "if os.path.exists(local_data_path / 'verified_northern_speakers.txt') and not os.path.exists(drive_data_path / 'verified_northern_speakers.txt'):",
+        "    import shutil",
+        "    shutil.copy(local_data_path / 'verified_northern_speakers.txt', drive_data_path / 'verified_northern_speakers.txt')",
+        "",
+        "# Remove local data dir and symlink to Google Drive",
+        "if local_data_path.exists() and not local_data_path.is_symlink():",
+        "    !rm -rf {local_data_path}",
+        "if not local_data_path.exists():",
+        "    !ln -s {drive_data_path} {local_data_path}",
+        "    print('Symlink to Google Drive active!')",
+        "",
+        "# 2. Run dataset preprocessing with smoke-test option",
+        "# To run the full dataset pre-processing, omit the --smoke-test flag.",
+        "smoke_test = True #@param {type:\"boolean\"}",
+        "smoke_flag = \"--smoke-test\" if smoke_test else \"\"",
+        "",
+        "# Launch preprocessor",
+        "!DATA_ROOT=kokoro_vietnamese/data python3 scripts_v3/prepare_dataset.py {smoke_flag}"
+    ]))
+
+    # 9. Step 8: Clone & Compile StyleTTS2 cell
+    notebook["cells"].append(create_markdown_cell([
+        "## Step 8: Download & Compile StyleTTS2 Architecture",
+        "Fine-tuning requires StyleTTS2's core architecture and their Cython `monotonic_align` timeline library. We clone StyleTTS2 to `/opt/StyleTTS2` and compile the Cython code in-place."
+    ]))
+    notebook["cells"].append(create_code_cell([
+        "# 1. Clone StyleTTS2",
+        "if not os.path.exists('/opt/StyleTTS2'):",
+        "    print('Cloning StyleTTS2 repository ...')",
+        "    !git clone --depth 1 https://github.com/yl4579/StyleTTS2.git /opt/StyleTTS2",
+        "",
+        "# 2. Compile monotonic_align in-place",
+        "print('Compiling monotonic_align Cython extensions ...')",
+        "!cd /opt/StyleTTS2/monotonic_align && python3 setup.py build_ext --inplace",
+        "print('Compilation complete!')"
+    ]))
+
+    # 10. Step 9: Launch training cell
+    notebook["cells"].append(create_markdown_cell([
+        "## Step 9: Launch Fine-Tuning Training Loop",
+        "We execute `run_train.py`. The coordinator script will:",
+        "* Automatically construct the full `config_vi.yaml` matching all adversarial parameters.",
+        "* Bind Colab-absolute container directories to StyleTTS2's dependencies.",
+        "* Run embedding surgery token validation.",
+        "* Initiate the multi-task loss adversarial optimization loop.",
+        "",
+        "Checkpoints are saved inside `/content/drive/MyDrive/tts_kokoro_vi/checkpoints` persistently, enabling resumption if the cell gets disconnected!"
+    ]))
+    notebook["cells"].append(create_code_cell([
+        "# Symlink checkpoints folder to Google Drive so checkpoints persist across restarts",
+        "local_ckpt_path = Path('/content/tts_kokoro_vi/kokoro_vietnamese/checkpoints')",
+        "drive_ckpt_path = Path(DRIVE_DIR) / 'checkpoints'",
+        "os.makedirs(drive_ckpt_path, exist_ok=True)",
+        "",
+        "if local_ckpt_path.exists() and not local_ckpt_path.is_symlink():",
+        "    # Copy existing files to drive if any",
+        "    !cp -r kokoro_vietnamese/checkpoints/* {drive_ckpt_path}/ 2>/dev/null || true",
+        "    !rm -rf {local_ckpt_path}",
+        "if not local_ckpt_path.exists():",
+        "    !ln -s {drive_ckpt_path} {local_ckpt_path}",
+        "    print('Symlinked checkpoints to Google Drive!')",
+        "",
+        "# Copy training execution scripts to the workspace expected paths",
+        "!mkdir -p kokoro_vietnamese/scripts",
+        "!cp scripts_v3/run_train.py kokoro_vietnamese/scripts/run_train.py",
+        "!cp scripts_v3/extend_vocab.py kokoro_vietnamese/scripts/extend_vocab.py",
+        "",
+        "# Copy OOD texts if missing",
+        "!mkdir -p /opt/StyleTTS2/Data",
+        "!cp kokoro_vietnamese/data/val_list.txt /opt/StyleTTS2/Data/OOD_texts.txt 2>/dev/null || echo 'No val list yet'",
+        "",
+        "# Enable Weights & Biases tracking (Optional)",
+        "use_wandb = False #@param {type:\"boolean\"}",
+        "wandb_flag = \"\" if use_wandb else \"--bypass-wandb\"",
+        "",
+        "# Launch training via V3 Orchestrator",
+        "# Runs a fast smoke-test or launches standard 50-epoch training",
+        "smoke_test_train = True #@param {type:\"boolean\"}",
+        "train_flag = \"--smoke-test --batch-size 2\" if smoke_test_train else \"--batch-size 16 --epochs 50\"",
+        "",
+        "# Execute",
+        "!PYTHONPATH=/opt/StyleTTS2:/opt/StyleTTS2/monotonic_align:$PYTHONPATH \\",
+        "python3 kokoro_vietnamese/scripts/run_train.py \\",
+        "    {train_flag} \\",
+        "    --save-every 1 \\",
+        "    --log-every 10 \\",
+        "    --project-dir kokoro_vietnamese"
+    ]))
+
+    # Write notebook file
+    out_path = Path("vietnamese_styletts2_colab.ipynb")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(notebook, f, indent=2, ensure_ascii=False)
+    
+    print(f"Jupyter Notebook successfully created at: {out_path.resolve()}")
+
+if __name__ == "__main__":
+    main()

@@ -60,13 +60,22 @@ def generate_yaml_config(
         "batch_size": batch_size,
         "max_len": 500,
         "pretrained_model": "/workspace/checkpoints/kokoro-vi-north-extended.pth",
+        "second_stage_load_pretrained": True, # Required for Stage 2 fine-tuning
         "load_only_params": True,
         "debug": False,
+        
+        # Absolute paths pointing inside the container's /opt/StyleTTS2
+        "F0_path": "/opt/StyleTTS2/Utils/JDC/bst.t7",
+        "ASR_config": "/opt/StyleTTS2/Utils/ASR/config.yml",
+        "ASR_path": "/opt/StyleTTS2/Utils/ASR/epoch_00080.pth",
+        "PLBERT_dir": "/opt/StyleTTS2/Utils/PLBERT/",
         
         "data_params": {
             "train_data": "/workspace/data/train_list.txt",
             "val_data": "/workspace/data/val_list.txt",
-            "root_path": "/workspace/"
+            "root_path": "/workspace/",
+            "OOD_data": "/opt/StyleTTS2/Data/OOD_texts.txt", # Container OOD path
+            "min_length": 50
         },
         
         "symbol": {
@@ -92,11 +101,13 @@ def generate_yaml_config(
         },
         
         "model_params": {
+            "multispeaker": True,
             "dim_in": 64,
             "hidden_dim": 512,
             "max_conv_dim": 512,
             "n_layer": 3,
             "n_mels": 80,
+            "n_token": len(vocab), # Crucial mathematical alignment of n_token!
             "max_dur": 50,
             "style_dim": 128,
             "dropout": 0.2,
@@ -117,6 +128,28 @@ def generate_yaml_config(
                 "upsample_initial_channel": 512,
                 "resblock_dilation_sizes": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
                 "upsample_kernel_sizes": [20, 10, 6, 4]
+            },
+            "slm": {
+                "model": "microsoft/wavlm-base-plus",
+                "sr": 16000,
+                "hidden": 768,
+                "nlayers": 13,
+                "initial_channel": 64
+            },
+            "diffusion": {
+                "embedding_mask_proba": 0.1,
+                "transformer": {
+                    "num_layers": 3,
+                    "num_heads": 8,
+                    "head_features": 64,
+                    "multiplier": 2
+                },
+                "dist": {
+                    "sigma_data": 0.2,
+                    "estimate_sigma_data": True,
+                    "mean": -3.0,
+                    "std": 1.0
+                }
             }
         },
         
@@ -128,12 +161,28 @@ def generate_yaml_config(
             "lambda_F0": 1.0,
             "lambda_norm": 1.0,
             "lambda_dur": 1.0,
-            "lambda_ce": 20.0
+            "lambda_ce": 20.0,
+            "lambda_slm": 1.0,  # SLM reconstruction loss
+            "lambda_sty": 1.0,  # Style reconstruction loss
+            "lambda_diff": 1.0, # Diffusion loss
+            "diff_epoch": 10,
+            "joint_epoch": 30
         },
         
         "optimizer_params": {
             "lr": 0.0001,
-            "ft_lr": 0.00001
+            "bert_lr": 0.00001,
+            "ft_lr": 0.0001
+        },
+        
+        "slmadv_params": {
+            "min_len": 400,
+            "max_len": 500,
+            "batch_percentage": 0.5,
+            "iter": 10,
+            "thresh": 5,
+            "scale": 0.01,
+            "sig": 1.5
         }
     }
 
@@ -192,9 +241,9 @@ def main():
         str(output_yaml)
     ]
     
-    # Run the official training script
+    # Run the official training script from its repository directory to resolve imports and asset paths smoothly
     try:
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, cwd="/opt/StyleTTS2")
     except subprocess.CalledProcessError as e:
         log.error("Training script failed with exit status %d", e.returncode)
         sys.exit(e.returncode)
